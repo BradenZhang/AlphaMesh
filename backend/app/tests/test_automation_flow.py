@@ -15,7 +15,11 @@ def test_automation_flow_manual_mode_returns_plan_only() -> None:
     assert result.mode == AutomationMode.MANUAL
     assert result.executed is False
     assert result.order is None
-    assert result.research_report.key_metrics["llm_provider"] == "mock"
+    assert result.multi_agent_report is not None
+    assert len(result.multi_agent_report.findings) == 4
+    assert result.agent_reviews is not None
+    assert result.agent_reviews.strategy_review.review_summary
+    assert result.agent_reviews.risk_review.review_summary
     assert result.explanation
 
 
@@ -29,6 +33,20 @@ def test_automation_flow_paper_auto_submits_mock_order() -> None:
     assert result.order is not None
     assert result.order.paper is True
     assert result.order.order_id.startswith("paper-")
+
+
+def test_automation_flow_accepts_llm_profile_id() -> None:
+    result = AutomationFlow().run(
+        AutomationRunRequest(
+            symbol="MSFT",
+            mode=AutomationMode.MANUAL,
+            llm_profile_id="mock",
+        )
+    )
+
+    assert result.symbol == "MSFT"
+    assert result.multi_agent_report is not None
+    assert result.agent_reviews is not None
 
 
 def test_automation_flow_live_auto_disabled_by_default() -> None:

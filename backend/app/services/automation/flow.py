@@ -3,19 +3,22 @@ import time
 from app.core.config import Settings, get_settings
 from app.core.exceptions import LiveTradingDisabledError
 from app.domain.enums import AutomationMode, OrderSide, SignalAction
+from app.schemas.agents import AgentReviewBundle
 from app.schemas.automation import AutomationRunRequest, AutomationRunResponse
 from app.schemas.order import OrderRequest
 from app.schemas.risk import RiskCheckRequest
+from app.services.agents.research_workflow import MultiAgentResearchWorkflow
 from app.services.agents.run_logger import AgentRunLogger
+from app.services.agents.runtime import AgentRuntime
 from app.services.automation.base import AutomationFlowBase
 from app.services.backtest.engine import BacktestEngine
 from app.services.broker.base import BrokerAdapter
 from app.services.broker.mock_broker import MockBrokerAdapter
 from app.services.explain.signal_explainer import SignalExplainer
+from app.services.llm.factory import get_llm_provider_for_profile
 from app.services.market.base import MarketSkillProvider
 from app.services.market.mock_provider import MockSkillProvider
 from app.services.research.base import ResearchAgent
-from app.services.research.factory import get_research_agent
 from app.services.risk.guard import RiskGuard
 from app.services.strategy.factory import get_strategy
 
@@ -31,7 +34,7 @@ class AutomationFlow(AutomationFlowBase):
     ) -> None:
         self.settings = settings or get_settings()
         self.market_provider = market_provider or MockSkillProvider()
-        self.research_agent = research_agent or get_research_agent(self.settings)
+        self.research_agent = research_agent
         self.broker_adapter = broker_adapter or MockBrokerAdapter()
         self.backtest_engine = BacktestEngine()
         self.risk_guard = RiskGuard(self.settings)
@@ -58,7 +61,12 @@ class AutomationFlow(AutomationFlowBase):
         quote = self.market_provider.get_quote(symbol)
         kline = self.market_provider.get_kline(symbol)
         fundamentals = self.market_provider.get_fundamentals(symbol)
-        research_report = self.research_agent.analyze(symbol)
+        agent_runtime = AgentRuntime(
+            llm_provider=get_llm_provider_for_profile(request.llm_profile_id, self.settings),
+            run_logger=self.run_logger,
+        )
+        multi_agent_report = MultiAgentResearchWorkflow(runtime=agent_runtime).run(symbol)
+        research_report = multi_agent_report.research_report
 
         strategy = get_strategy(request.strategy_name)
         strategy_signal = strategy.generate_signal(
@@ -72,6 +80,12 @@ class AutomationFlow(AutomationFlowBase):
             bars=kline.bars,
             strategy_name=request.strategy_name,
         )
+        strategy_review = agent_runtime.run_strategy_review(
+            symbol=symbol,
+            research=research_report,
+            signal=strategy_signal,
+            backtest=backtest_result,
+        )
         order_request = self._build_order_request(strategy_signal.action, symbol, quote.price)
         risk_result = self.risk_guard.check(
             RiskCheckRequest(
@@ -82,11 +96,22 @@ class AutomationFlow(AutomationFlowBase):
                 current_position_pct=0.0,
             )
         )
+        risk_review = agent_runtime.run_risk_review(
+            symbol=symbol,
+            signal=strategy_signal,
+            risk_result=risk_result,
+        )
         explanation = self.explainer.explain(
             research_report=research_report,
             strategy_signal=strategy_signal,
             backtest_result=backtest_result,
             risk_result=risk_result,
+        )
+        explanation = (
+            f"{explanation} 多 Agent 委员会观点："
+            f"{multi_agent_report.committee_report.consensus_view} "
+            f"策略复核：{strategy_review.review_summary} "
+            f"风控复核：{risk_review.review_summary}"
         )
 
         order = None
@@ -112,6 +137,11 @@ class AutomationFlow(AutomationFlowBase):
             backtest_result=backtest_result,
             risk_result=risk_result,
             explanation=explanation,
+            multi_agent_report=multi_agent_report,
+            agent_reviews=AgentReviewBundle(
+                strategy_review=strategy_review,
+                risk_review=risk_review,
+            ),
             order=order,
             executed=executed,
             message=message,

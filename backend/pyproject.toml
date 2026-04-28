@@ -13,6 +13,7 @@ dependencies = [
     "langchain-openai>=1.2.1",
     "langchain-anthropic>=1.4.1",
     "langchain-google-genai>=4.2.2",
+    "jieba>=0.42.1",
 ]
 
 [dependency-groups]
@@ -25,6 +26,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore::SyntaxWarning:jieba.*",
+]
 
 [tool.ruff]
 line-length = 100

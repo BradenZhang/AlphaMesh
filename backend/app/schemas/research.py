@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class ResearchAnalyzeRequest(BaseModel):
     symbol: str
+    llm_profile_id: str | None = None
 
 
 class ResearchReport(BaseModel):

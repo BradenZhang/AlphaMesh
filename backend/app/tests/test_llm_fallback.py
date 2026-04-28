@@ -23,7 +23,12 @@ def test_llm_research_agent_falls_back_on_invalid_output() -> None:
     report = agent.analyze("AAPL")
 
     assert report.symbol == "AAPL"
-    assert report.key_metrics["llm_fallback"] == "output_validation_failed"
+    assert report.key_metrics["agent_count"] == 4
     assert report.summary
     runs = AgentRunLogger().list_recent(limit=10)
-    assert any(run.run_type == "research_fallback" and run.symbol == "AAPL" for run in runs)
+    assert any(
+        run.run_type == "financial_statement_agent"
+        and run.status == "fallback"
+        and run.symbol == "AAPL"
+        for run in runs
+    )

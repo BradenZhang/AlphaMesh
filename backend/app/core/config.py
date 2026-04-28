@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     llm_model_name: str = "mock-research-v1"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
+    llm_profiles_json: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     gemini_api_key: str | None = None

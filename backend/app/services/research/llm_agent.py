@@ -1,5 +1,6 @@
 from app.schemas.research import ResearchReport
 from app.services.agents.base import AgentRuntimeBase
+from app.services.agents.research_workflow import MultiAgentResearchWorkflow
 from app.services.agents.run_logger import AgentRunLogger
 from app.services.agents.runtime import AgentRuntime
 from app.services.llm.output_guard import LLMOutputValidationError
@@ -14,12 +15,13 @@ class LLMResearchAgent(ResearchAgent):
         run_logger: AgentRunLogger | None = None,
     ) -> None:
         self.runtime = runtime or AgentRuntime()
+        self.workflow = MultiAgentResearchWorkflow(runtime=self.runtime)
         self.fallback_agent = MockResearchAgent()
         self.run_logger = run_logger or AgentRunLogger()
 
     def analyze(self, symbol: str) -> ResearchReport:
         try:
-            return self.runtime.run_research(symbol)
+            return self.workflow.run(symbol).research_report
         except LLMOutputValidationError as exc:
             report = self.fallback_agent.analyze(symbol)
             report.key_metrics["llm_fallback"] = "output_validation_failed"

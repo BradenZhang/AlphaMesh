@@ -22,3 +22,19 @@ class LLMProviderInfo(BaseModel):
     provider: str
     model: str
     is_mock: bool = False
+
+
+class LLMProfileInfo(BaseModel):
+    id: str
+    label: str
+    provider: str
+    model: str
+    base_url_configured: bool = False
+    api_key_configured: bool = False
+    is_mock: bool = False
+    is_default: bool = False
+
+
+class LLMProfileListResponse(BaseModel):
+    default_profile_id: str
+    profiles: list[LLMProfileInfo]

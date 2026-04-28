@@ -4,6 +4,22 @@ export type AgentStatus = {
   is_mock: boolean;
 };
 
+export type LLMProfile = {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  base_url_configured: boolean;
+  api_key_configured: boolean;
+  is_mock: boolean;
+  is_default: boolean;
+};
+
+export type LLMProfileListResponse = {
+  default_profile_id: string;
+  profiles: LLMProfile[];
+};
+
 export type AgentRun = {
   run_id: string;
   run_type: string;
@@ -23,6 +39,117 @@ export type ResearchReport = {
   valuation_view: string;
   risks: string[];
   confidence_score: number;
+};
+
+export type AgentFinding = {
+  agent_name: string;
+  symbol: string;
+  thesis: string;
+  key_points: string[];
+  metrics: Record<string, number | string>;
+  risks: string[];
+  confidence_score: number;
+};
+
+export type InvestmentCommitteeReport = {
+  symbol: string;
+  summary: string;
+  consensus_view: string;
+  key_debates: string[];
+  action_bias: string;
+  confidence_score: number;
+};
+
+export type MultiAgentResearchReport = {
+  symbol: string;
+  findings: AgentFinding[];
+  committee_report: InvestmentCommitteeReport;
+  research_report: ResearchReport;
+};
+
+export type StrategyReviewReport = {
+  symbol: string;
+  aligned: boolean;
+  review_summary: string;
+  strengths: string[];
+  concerns: string[];
+  confidence_score: number;
+};
+
+export type RiskReviewReport = {
+  symbol: string;
+  approved_for_auto: boolean;
+  review_summary: string;
+  risk_flags: string[];
+  confidence_score: number;
+};
+
+export type AgentReviewBundle = {
+  strategy_review: StrategyReviewReport;
+  risk_review: RiskReviewReport;
+};
+
+export type ReActStep = {
+  step_number: number;
+  rationale_summary: string;
+  tool_call: {
+    tool_name: string;
+    arguments: Record<string, unknown>;
+  };
+  observation: {
+    success: boolean;
+    summary: string;
+    data: Record<string, unknown>;
+  };
+};
+
+export type ReActResult = {
+  symbol: string;
+  llm_profile_id: string | null;
+  steps: ReActStep[];
+  final_answer: string;
+  confidence_score: number;
+};
+
+export type MemoryRecord = {
+  memory_id: string;
+  scope: "short_term" | "long_term";
+  memory_type: string;
+  symbol: string | null;
+  user_id: string;
+  content: string;
+  content_hash: string | null;
+  token_keywords: string[];
+  metadata: Record<string, unknown>;
+  importance_score: number;
+  token_estimate: number;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type MemoryContext = {
+  symbol: string | null;
+  user_id: string;
+  query: string | null;
+  context: string;
+  memories: MemoryRecord[];
+  token_budget: number;
+  token_estimate: number;
+  compacted: boolean;
+  compression_triggered: boolean;
+  compression_strategy: string;
+  budget_allocation: Record<string, number>;
+  compression_token_usage: Record<string, number>;
+};
+
+export type MemoryStats = {
+  short_term_count: number;
+  long_term_count: number;
+  total_count: number;
+  total_token_estimate: number;
+  index_loaded_count: number;
+  index_keyword_count: number;
+  index_loaded_at: string | null;
 };
 
 export type Quote = {
@@ -73,6 +200,8 @@ export type AutomationResult = {
     reasons: string[];
   };
   explanation: string;
+  multi_agent_report: MultiAgentResearchReport | null;
+  agent_reviews: AgentReviewBundle | null;
   executed: boolean;
   message: string;
   order: {

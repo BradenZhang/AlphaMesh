@@ -34,8 +34,23 @@ class OpenAICompatibleProvider(LLMProvider):
             content=content,
             provider=self.provider_name,
             model=self.model,
+            usage=self._extract_usage(response),
             raw=content,
         )
 
     def get_provider_info(self) -> LLMProviderInfo:
         return LLMProviderInfo(provider=self.provider_name, model=self.model, is_mock=False)
+
+    def _extract_usage(self, response) -> dict[str, int]:
+        usage = getattr(response, "usage_metadata", None) or {}
+        metadata = getattr(response, "response_metadata", None) or {}
+        token_usage = metadata.get("token_usage", {}) if isinstance(metadata, dict) else {}
+        return {
+            "prompt_tokens": int(
+                usage.get("input_tokens") or token_usage.get("prompt_tokens") or 0
+            ),
+            "completion_tokens": int(
+                usage.get("output_tokens") or token_usage.get("completion_tokens") or 0
+            ),
+            "total_tokens": int(usage.get("total_tokens") or token_usage.get("total_tokens") or 0),
+        }

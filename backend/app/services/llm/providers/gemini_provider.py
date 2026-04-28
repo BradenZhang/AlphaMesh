@@ -23,8 +23,17 @@ class GeminiProvider(LLMProvider):
             content=content,
             provider="gemini",
             model=self.model,
+            usage=self._extract_usage(response),
             raw=content,
         )
 
     def get_provider_info(self) -> LLMProviderInfo:
         return LLMProviderInfo(provider="gemini", model=self.model, is_mock=False)
+
+    def _extract_usage(self, response) -> dict[str, int]:
+        usage = getattr(response, "usage_metadata", None) or {}
+        return {
+            "prompt_tokens": int(usage.get("input_tokens") or 0),
+            "completion_tokens": int(usage.get("output_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        }

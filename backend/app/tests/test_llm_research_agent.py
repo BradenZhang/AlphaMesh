@@ -15,6 +15,7 @@ def test_llm_research_agent_returns_valid_report() -> None:
 
     assert report.symbol == "AAPL"
     assert report.summary
-    assert report.key_metrics["llm_provider"] == "mock"
+    assert report.key_metrics["agent_count"] == 4
+    assert report.key_metrics["committee_confidence"] > 0
     assert report.risks
     assert 0 <= report.confidence_score <= 1
