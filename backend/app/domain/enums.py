@@ -1,0 +1,35 @@
+from enum import StrEnum
+
+
+class SignalAction(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+
+
+class RiskLevel(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class AutomationMode(StrEnum):
+    MANUAL = "manual"
+    PAPER_AUTO = "paper_auto"
+    LIVE_AUTO = "live_auto"
+
+
+class OrderSide(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class OrderStatus(StrEnum):
+    SUBMITTED = "SUBMITTED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+
+
+class StrategyName(StrEnum):
+    MOVING_AVERAGE_CROSS = "moving_average_cross"
+    VALUATION_BAND = "valuation_band"
