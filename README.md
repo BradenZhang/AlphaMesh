@@ -1,88 +1,167 @@
 # AlphaMesh
 
-> 多 Agent 投研策略自动化平台（v0.1 Demo）
+AlphaMesh is an AI stock research and paper-trading automation prototype. It combines a FastAPI backend, a React chat workspace, multi-agent research workflows, ReAct-style tool use, memory, strategy/backtest/risk checks, and paper order simulation.
 
-AlphaMesh 提供可运行的前后端 Dashboard，覆盖 **行情 -> 投研 -> 策略 -> 回测 -> 风控 -> 解释 -> paper trading** 的完整演示闭环。  
-当前版本聚焦工程验证：**不接真实券商 API，不进行真实交易**。
+The current UI is conversation-first: users create chat threads, choose an action mode, send a prompt, and receive assistant replies with expandable structured artifacts such as ReAct traces, multi-agent reports, automation results, and paper orders.
 
-## 目录
+> This project is for engineering validation and research workflow prototyping. It is not a production trading system and does not place real-money trades.
 
-- [核心亮点](#核心亮点)
-- [快速开始](#快速开始)
-- [Docker 启动](#docker-启动)
-- [测试与构建](#测试与构建)
-- [Demo API 快速清单](#demo-api-快速清单)
-- [LLM 与 Agent 配置](#llm-与-agent-配置)
-- [安全声明](#安全声明)
+## Features
 
-## 核心亮点
+- FastAPI backend with versioned `/api/v1` routes and Swagger docs.
+- React + Vite frontend exposed as an AI agent chat workspace.
+- Persistent chat conversations and messages.
+- Natural-language `chat` action backed by ReAct runtime.
+- Explicit quick actions for `research`, `manual_plan`, and `paper_auto`.
+- Multi-agent research workflow with structured committee output.
+- Strategy, backtest, risk guard, explanation, and paper order simulation.
+- Long-term memory with keyword indexing, deduplication, token budgeting, and compression support.
+- LLM provider abstraction with mock, OpenAI-compatible, Anthropic, and Gemini provider paths.
+- LLM call logging for token, latency, provider, and model observability.
+- Docker Compose local stack with frontend, backend, and PostgreSQL.
 
-- FastAPI 后端 + Swagger 文档，React Dashboard 前端。
-- `MockSkillProvider` 提供稳定可测的行情/基本面 mock 数据。
-- 多 Agent 投研工作流（财报、估值、行业、新闻、投资委员会）。
-- ReAct-lite 只读工具链路（结构化 trace，无原始 chain-of-thought）。
-- 双策略示例：`MovingAverageCrossStrategy`、`ValuationBandStrategy`。
-- 回测指标、RiskGuard 风控、信号解释、Automation Flow 全链路串联。
-- Memory System：长期记忆去重、中文轻量检索、Map-Reduce 压缩、Token 预算管理。
-- LLM Call 观测：记录每次调用的 `prompt/completion/total tokens`。
+## Repository Layout
 
-## 快速开始
+```text
+backend/
+  app/
+    api/                 FastAPI routers and request validation helpers
+    core/                settings and configuration
+    db/                  SQLAlchemy base, session, and models
+    domain/              enums and domain-level contracts
+    schemas/             Pydantic request/response schemas
+    services/            agents, automation, LLM, memory, orders, and chat services
+    tests/               pytest suite
 
-### 1) 启动后端
+frontend/
+  src/
+    components/          chat workspace UI components
+    utils/               formatting and UI helpers
+    api.ts               typed frontend API client
+    App.tsx              workspace state orchestration
+    styles.css           app-level styling
+    types.ts             frontend domain types
+```
 
-```bash
+## Quick Start
+
+### 1. Start the backend
+
+```powershell
 cd backend
 uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-### 2) 启动前端
+### 2. Start the frontend
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-### 3) 访问地址
+### 3. Open the app
 
-- Swagger: `http://localhost:8000/docs`
-- Dashboard: `http://localhost:5173`
-- Health: `curl http://localhost:8000/api/v1/health`
+- Frontend chat workspace: `http://localhost:5173`
+- Backend API docs: `http://localhost:8000/docs`
+- Health check: `http://localhost:8000/api/v1/health`
 
-## Docker 启动
+## Docker Compose
 
-```bash
+Run the full local stack:
+
+```powershell
 docker compose up --build
 ```
 
-- Backend: `http://localhost:8000`
+Services:
+
 - Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
+- PostgreSQL: `localhost:5432`
 
-> Docker Compose 仅用于本地开发；PostgreSQL 使用本地 trust 认证，不应直接用于生产环境。
+Docker Compose is configured for local development. PostgreSQL uses local trust authentication and should not be used as-is in production.
 
-## 测试与构建
+## Build And Test
 
-后端：
+Backend:
 
-```bash
+```powershell
 cd backend
 uv run pytest
 uv run ruff check .
 ```
 
-前端：
+Frontend:
 
-```bash
+```powershell
 cd frontend
 npm run build
 ```
 
-## Demo API 快速清单
+For full-stack changes, run all three checks.
 
-### 基础状态
+## Chat API
 
-```bash
+Create a conversation:
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/chat/conversations `
+  -H "Content-Type: application/json" `
+  -d "{\"symbol\":\"AAPL\",\"strategy_name\":\"moving_average_cross\"}"
+```
+
+List conversations:
+
+```powershell
+curl http://localhost:8000/api/v1/chat/conversations
+```
+
+Send a default ReAct-backed chat reply:
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/chat/conversations/{conversation_id}/reply `
+  -H "Content-Type: application/json" `
+  -d "{\"message\":\"Compare AAPL price action and fundamentals.\"}"
+```
+
+Run a multi-agent research reply:
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/chat/conversations/{conversation_id}/reply `
+  -H "Content-Type: application/json" `
+  -d "{\"message\":\"Run a full research pass.\",\"action\":\"research\"}"
+```
+
+Run an automation plan without order submission:
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/chat/conversations/{conversation_id}/reply `
+  -H "Content-Type: application/json" `
+  -d "{\"message\":\"Build a manual trading plan.\",\"action\":\"manual_plan\"}"
+```
+
+Run paper automation:
+
+```powershell
+curl -X POST http://localhost:8000/api/v1/chat/conversations/{conversation_id}/reply `
+  -H "Content-Type: application/json" `
+  -d "{\"message\":\"Run paper automation.\",\"action\":\"paper_auto\"}"
+```
+
+Supported reply actions:
+
+- `chat`: natural-language ReAct workflow.
+- `research`: full multi-agent research workflow.
+- `manual_plan`: automation workflow without paper order submission.
+- `paper_auto`: automation workflow with mock paper order submission.
+
+## Legacy And Supporting APIs
+
+Status and observability:
+
+```powershell
 curl http://localhost:8000/api/v1/agents/status
 curl "http://localhost:8000/api/v1/agents/runs?limit=10"
 curl "http://localhost:8000/api/v1/agents/llm-calls?limit=10"
@@ -90,58 +169,59 @@ curl http://localhost:8000/api/v1/agents/llm-profiles
 curl "http://localhost:8000/api/v1/orders/paper?limit=10"
 ```
 
-### 投研与自动化
+Direct research and automation endpoints:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/research/analyze \
-  -H "Content-Type: application/json" \
+```powershell
+curl -X POST http://localhost:8000/api/v1/research/analyze `
+  -H "Content-Type: application/json" `
   -d "{\"symbol\":\"AAPL\"}"
 
-curl -X POST http://localhost:8000/api/v1/agents/research/workflow \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/api/v1/agents/research/workflow `
+  -H "Content-Type: application/json" `
   -d "{\"symbol\":\"AAPL\"}"
 
-curl -X POST http://localhost:8000/api/v1/agents/react/run \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/api/v1/agents/react/run `
+  -H "Content-Type: application/json" `
   -d "{\"symbol\":\"AAPL\",\"llm_profile_id\":\"mock\",\"max_steps\":3}"
 
-curl -X POST http://localhost:8000/api/v1/automation/run \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/api/v1/automation/run `
+  -H "Content-Type: application/json" `
   -d "{\"symbol\":\"AAPL\",\"mode\":\"manual\",\"strategy_name\":\"moving_average_cross\"}"
-
-curl -X POST http://localhost:8000/api/v1/automation/run \
-  -H "Content-Type: application/json" \
-  -d "{\"symbol\":\"AAPL\",\"mode\":\"paper_auto\",\"strategy_name\":\"moving_average_cross\"}"
 ```
 
-`live_auto` 默认关闭（返回明确错误）：
+`live_auto` is intentionally disabled by default:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/automation/run \
-  -H "Content-Type: application/json" \
+```powershell
+curl -X POST http://localhost:8000/api/v1/automation/run `
+  -H "Content-Type: application/json" `
   -d "{\"symbol\":\"AAPL\",\"mode\":\"live_auto\"}"
 ```
 
-### Memory 相关
+## Memory API
 
-查看上下文（带中文 query）：
+Fetch memory context:
 
-```bash
-curl "http://localhost:8000/api/v1/agents/memory/context?symbol=AAPL&query=低回撤"
+```powershell
+curl "http://localhost:8000/api/v1/agents/memory/context?symbol=AAPL&query=valuation"
 ```
 
-写入长期偏好 + 重载索引：
+Write a long-term memory:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/agents/memory/write \
-  -H "Content-Type: application/json" \
-  -d "{\"scope\":\"long_term\",\"memory_type\":\"preference\",\"symbol\":\"AAPL\",\"content\":\"偏好低回撤策略和估值安全边际。\",\"importance_score\":0.7}"
+```powershell
+curl -X POST http://localhost:8000/api/v1/agents/memory/write `
+  -H "Content-Type: application/json" `
+  -d "{\"scope\":\"long_term\",\"memory_type\":\"preference\",\"symbol\":\"AAPL\",\"content\":\"Prefer strategies with lower drawdown and clear valuation margin of safety.\",\"importance_score\":0.7}"
+```
+
+Reload the in-memory keyword index:
+
+```powershell
 curl -X POST http://localhost:8000/api/v1/agents/memory/reload-index
 ```
 
-## LLM 与 Agent 配置
+## LLM Configuration
 
-默认配置使用 Mock，不需要任何 API key：
+The default configuration uses the deterministic mock provider and does not require an API key.
 
 ```env
 LLM_PROVIDER=mock
@@ -152,44 +232,33 @@ LLM_PROFILES_JSON=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
+LLM_TIMEOUT=60
+LLM_MAX_RETRIES=3
 ```
 
-可选 OpenAI-compatible profile 示例：
+OpenAI-compatible profile example:
 
 ```env
-OPENAI_API_KEY=your-local-api-key
+OPENAI_API_KEY=your-api-key
 LLM_PROFILES_JSON=[{"id":"openai-compatible","label":"OpenAI Compatible","provider":"openai_compatible","model":"gpt-4o-mini","base_url":"https://api.openai.com/v1","api_key_env":"OPENAI_API_KEY"}]
 ```
 
-### 运行机制说明
+Notes:
 
-- LLM 输出会做结构化校验，失败自动回退 deterministic mock。
-- 前端只传 `llm_profile_id`，不会暴露 API key。
-- ReAct-lite 仅允许只读工具（行情/K线/基本面/市场上下文）。
-- Memory 系统支持长期记忆去重与中文检索。
-- 当上下文超过 Token 总预算 80% 时触发 Map-Reduce 压缩（每 5 条消息一组 Map，单组不做 Reduce）。
-- 所有 LLM 调用均记录 token 消耗。
+- Frontend requests pass only `llm_profile_id`; API keys remain backend-side.
+- LLM outputs are validated into structured schemas. Invalid responses fall back to deterministic mock behavior where applicable.
+- ReAct traces store structured tool calls and observations, not raw chain-of-thought.
+- LLM calls are logged with provider, model, token counts, and latency.
 
-### Provider 配置验证
+## Safety
 
-```bash
-cd backend
-uv run pytest
-uv run uvicorn app.main:app --reload
-curl http://localhost:8000/api/v1/agents/status
-curl -X POST http://localhost:8000/api/v1/research/analyze \
-  -H "Content-Type: application/json" \
-  -d "{\"symbol\":\"AAPL\",\"llm_profile_id\":\"mock\"}"
-curl -X POST http://localhost:8000/api/v1/agents/react/run \
-  -H "Content-Type: application/json" \
-  -d "{\"symbol\":\"AAPL\",\"llm_profile_id\":\"mock\"}"
-curl "http://localhost:8000/api/v1/agents/memory/stats"
-```
+AlphaMesh is not investment advice and not a production brokerage system.
 
-> 在 Python 3.14 环境下，`jieba` 上游会触发 `SyntaxWarning`；项目已在 pytest 配置中过滤该第三方告警，不影响功能和测试结果。
+- Real-money execution is not enabled by default.
+- Paper orders are mock execution records for workflow validation.
+- Do not commit API keys, broker credentials, `.env` files, local databases, or generated caches.
+- Do not use LLM-generated signals directly for live trading without independent validation, risk controls, and compliance review.
 
-## 安全声明
+## Contributor Notes
 
-本项目不是生产级交易系统，不接真实资金账户，不调用真实券商 API，不包含任何真实密钥。  
-所有策略信号、回测结果、ReAct 工具轨迹、Memory 摘要和解释仅用于工程框架验证，**不构成投资建议**。  
-配置真实 provider 后，建议仅验证 `/api/v1/agents/llm-profiles`、`/api/v1/research/analyze`、`/api/v1/agents/research/workflow`、`/api/v1/agents/react/run`，不要把 LLM 输出直接用于真实交易。
+See `AGENTS.md` for build commands, testing expectations, code style, and Git workflow rules for agents and contributors.
