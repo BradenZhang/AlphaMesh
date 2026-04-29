@@ -1,5 +1,5 @@
 export type AgentStatus = {
-  provider: string;
+  provider: "openai" | "anthropic" | "gemini" | "mock" | (string & {});
   model: string;
   is_mock: boolean;
 };
@@ -20,10 +20,13 @@ export type LLMProfileListResponse = {
   profiles: LLMProfile[];
 };
 
+export type AgentRunStatus = "pending" | "running" | "completed" | "failed";
+export type AgentRunType = "research" | "automation" | "manual_plan" | (string & {});
+
 export type AgentRun = {
   run_id: string;
-  run_type: string;
-  status: string;
+  run_type: AgentRunType;
+  status: AgentRunStatus;
   symbol: string | null;
   provider: string | null;
   model: string | null;
@@ -56,7 +59,7 @@ export type InvestmentCommitteeReport = {
   summary: string;
   consensus_view: string;
   key_debates: string[];
-  action_bias: string;
+  action_bias: "buy" | "sell" | "hold" | (string & {});
   confidence_score: number;
 };
 
@@ -137,7 +140,7 @@ export type MemoryContext = {
   token_estimate: number;
   compacted: boolean;
   compression_triggered: boolean;
-  compression_strategy: string;
+  compression_strategy: "map_reduce" | "none" | (string & {});
   budget_allocation: Record<string, number>;
   compression_token_usage: Record<string, number>;
 };
@@ -165,24 +168,29 @@ export type Quote = {
 };
 
 export type StrategyName = "moving_average_cross" | "valuation_band";
+export type ReplyAction = "chat" | "research" | "manual_plan" | "paper_auto";
+
+export type PaperOrderSide = "buy" | "sell";
+export type PaperOrderStatus = "pending" | "filled" | "cancelled" | (string & {});
 
 export type PaperOrder = {
   order_id: string;
   symbol: string;
-  side: string;
+  side: PaperOrderSide;
   quantity: number;
   limit_price: number | null;
   estimated_amount: number | null;
-  status: string;
+  status: PaperOrderStatus;
   created_at: string;
+  paper?: boolean;
 };
 
 export type AutomationResult = {
   symbol: string;
-  mode: string;
+  mode: "manual" | "paper_auto" | "live_auto" | (string & {});
   research_report: ResearchReport;
   strategy_signal: {
-    action: string;
+    action: "buy" | "sell" | "hold" | (string & {});
     confidence: number;
     reason: string;
     suggested_position_pct: number;
@@ -196,7 +204,7 @@ export type AutomationResult = {
   };
   risk_result: {
     approved: boolean;
-    risk_level: string;
+    risk_level: "LOW" | "MEDIUM" | "HIGH" | "BLOCKED" | (string & {});
     reasons: string[];
   };
   explanation: string;
@@ -204,10 +212,74 @@ export type AutomationResult = {
   agent_reviews: AgentReviewBundle | null;
   executed: boolean;
   message: string;
-  order: {
-    order_id: string;
-    side: string;
-    quantity: number;
-    status: string;
-  } | null;
+  order: PaperOrder | null;
+};
+
+export type ChatArtifactBase = {
+  title: string;
+};
+
+export type ReactTraceArtifact = ChatArtifactBase & {
+  type: "react_trace";
+  payload: ReActResult;
+};
+
+export type ResearchReportArtifact = ChatArtifactBase & {
+  type: "research_report";
+  payload: ResearchReport;
+};
+
+export type MultiAgentArtifact = ChatArtifactBase & {
+  type: "multi_agent_report";
+  payload: MultiAgentResearchReport;
+};
+
+export type AutomationArtifact = ChatArtifactBase & {
+  type: "automation_result";
+  payload: AutomationResult;
+};
+
+export type PaperOrderArtifact = ChatArtifactBase & {
+  type: "paper_order";
+  payload: PaperOrder;
+};
+
+export type ChatArtifact =
+  | ReactTraceArtifact
+  | ResearchReportArtifact
+  | MultiAgentArtifact
+  | AutomationArtifact
+  | PaperOrderArtifact;
+
+export type ChatMessage = {
+  message_id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  action: ReplyAction | null;
+  content: string;
+  artifacts: ChatArtifact[];
+  status: "completed" | "error";
+  created_at: string;
+};
+
+export type ConversationSummary = {
+  conversation_id: string;
+  title: string;
+  symbol: string | null;
+  llm_profile_id: string | null;
+  strategy_name: StrategyName | null;
+  user_id: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationDetail = ConversationSummary & {
+  messages: ChatMessage[];
+};
+
+export type ReplyResponse = {
+  conversation: ConversationSummary;
+  user_message: ChatMessage;
+  assistant_message: ChatMessage;
 };

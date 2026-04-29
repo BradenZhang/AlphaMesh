@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     agents,
     automation,
     backtest,
+    chat,
     health,
     market,
     orders,
@@ -22,3 +23,4 @@ api_router.include_router(risk.router, prefix="/risk", tags=["risk"])
 api_router.include_router(automation.router, prefix="/automation", tags=["automation"])
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(orders.router, prefix="/orders", tags=["orders"])
+api_router.include_router(chat.router, prefix="/chat", tags=["chat"])

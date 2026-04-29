@@ -10,7 +10,10 @@ class TokenBudgetManager:
         normalized = text.strip()
         if not normalized:
             return 0
-        return max(1, len(normalized) // 4)
+        # CJK characters are ~1-2 tokens each; Latin words are ~1 token per 4 chars.
+        cjk_count = sum(1 for ch in normalized if "一" <= ch <= "鿿")
+        non_cjk_len = len(normalized) - cjk_count
+        return max(1, cjk_count + non_cjk_len // 4)
 
     def trim(
         self,

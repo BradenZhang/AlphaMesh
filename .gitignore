@@ -1,16 +1,48 @@
+# Environment
 .env
+.env.local
+.env.production
+
+# Python
 .venv/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
-*.db
-uv.lock
 *.egg-info/
-postgres_data/
+htmlcov/
+.coverage
+coverage/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
 node_modules/
 dist/
 .vite/
 *.tsbuildinfo
+
+# Docker
+postgres_data/
+
+# IDE
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts
+uv.lock
 frontend/vite.config.js
 frontend/vite.config.d.ts

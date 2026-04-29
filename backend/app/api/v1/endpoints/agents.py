@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 
+from app.api.deps import validate_symbol
 from app.schemas.agents import (
     AgentRunListResponse,
     LLMCallListResponse,
@@ -65,10 +66,11 @@ def get_llm_profiles() -> LLMProfileListResponse:
 
 @router.post("/research/workflow", response_model=MultiAgentResearchReport)
 def run_multi_agent_research(request: ResearchAnalyzeRequest) -> MultiAgentResearchReport:
+    validated = validate_symbol(request.symbol)
     try:
         provider = get_llm_provider_for_profile(request.llm_profile_id)
         return MultiAgentResearchWorkflow(runtime=AgentRuntime(llm_provider=provider)).run(
-            request.symbol
+            validated
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -76,10 +78,11 @@ def run_multi_agent_research(request: ResearchAnalyzeRequest) -> MultiAgentResea
 
 @router.post("/react/run", response_model=ReActRunResponse)
 def run_react_agent(request: ReActRunRequest) -> ReActRunResponse:
+    validated = validate_symbol(request.symbol)
     try:
         provider = get_llm_provider_for_profile(request.llm_profile_id)
         return ReActRuntime(llm_provider=provider).run(
-            symbol=request.symbol,
+            symbol=validated,
             question=request.question,
             llm_profile_id=request.llm_profile_id,
             max_steps=request.max_steps,

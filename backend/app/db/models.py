@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,6 +17,10 @@ class PaperOrderRecord(Base):
     limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_paper_orders_symbol_status", "symbol", "status"),
+    )
 
 
 class AgentRunRecord(Base):
@@ -69,4 +73,43 @@ class AgentMemoryRecord(Base):
     importance_score: Mapped[float] = mapped_column(Float, default=0.5)
     token_estimate: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_agent_memories_user_scope_symbol", "user_id", "scope", "symbol"),
+        Index(
+            "ix_agent_memories_user_scope_type_symbol",
+            "user_id",
+            "scope",
+            "memory_type",
+            "symbol",
+        ),
+    )
+
+
+class ChatConversationRecord(Base):
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(120), default="New Chat")
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    llm_profile_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    strategy_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ChatMessageRecord(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    message_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(16), index=True)
+    action: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    content: Mapped[str] = mapped_column(Text)
+    artifacts_payload: Mapped[list[dict] | None] = mapped_column("artifacts", JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="completed", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

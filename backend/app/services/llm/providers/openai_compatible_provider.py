@@ -1,6 +1,6 @@
 from langchain_openai import ChatOpenAI
 
-from app.services.llm.base import LLMProvider
+from app.services.llm.base import LLMProvider, _make_retry_decorator
 from app.services.llm.providers.langchain_messages import to_langchain_messages
 from app.services.llm.schemas import LLMMessage, LLMProviderInfo, LLMResponse
 
@@ -12,6 +12,8 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         base_url: str | None = None,
         provider_name: str = "openai_compatible",
+        timeout: float = 60.0,
+        max_retries: int = 3,
     ) -> None:
         if not api_key:
             raise ValueError(f"{provider_name} provider requires an API key.")
@@ -21,14 +23,24 @@ class OpenAICompatibleProvider(LLMProvider):
             model=model,
             api_key=api_key,
             base_url=base_url,
+            timeout=timeout,
         )
+        self._retry_decorator = _make_retry_decorator(max_retries)
 
     def generate(
         self,
         messages: list[LLMMessage],
         temperature: float = 0.2,
     ) -> LLMResponse:
-        response = self.client.bind(temperature=temperature).invoke(to_langchain_messages(messages))
+        @self._retry_decorator
+        def _invoke():
+            return self._timed_call(
+                f"{self.provider_name}({self.model})",
+                self.client.bind(temperature=temperature).invoke,
+                to_langchain_messages(messages),
+            )
+
+        response = _invoke()
         content = response.content if isinstance(response.content, str) else str(response.content)
         return LLMResponse(
             content=content,

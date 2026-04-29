@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import RLock
@@ -34,6 +35,9 @@ class MemorySearchHit:
 class MemoryIndex:
     def __init__(self) -> None:
         self._records: dict[str, IndexedMemory] = {}
+        # Inverted index: keyword -> set of memory_ids
+        self._keyword_index: dict[str, set[str]] = defaultdict(set)
+        self._keyword_count: int = 0
         self._lock = RLock()
         self.loaded_at: datetime | None = None
 
@@ -57,6 +61,7 @@ class MemoryIndex:
                 record.memory_id: self._from_record(record)
                 for record in records
             }
+            self._rebuild_keyword_index()
             self.loaded_at = now
             return len(self._records)
 
@@ -64,11 +69,18 @@ class MemoryIndex:
         if record.scope != "long_term":
             return
         with self._lock:
-            self._records[record.memory_id] = self._from_record(record)
+            existing = self._records.get(record.memory_id)
+            if existing:
+                self._remove_from_keyword_index(existing)
+            indexed = self._from_record(record)
+            self._records[record.memory_id] = indexed
+            self._add_to_keyword_index(indexed)
 
     def remove(self, memory_id: str) -> None:
         with self._lock:
-            self._records.pop(memory_id, None)
+            existing = self._records.pop(memory_id, None)
+            if existing:
+                self._remove_from_keyword_index(existing)
 
     def remove_expired(self) -> None:
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -79,7 +91,9 @@ class MemoryIndex:
                 if record.expires_at is not None and record.expires_at < now
             ]
             for memory_id in expired_ids:
-                self._records.pop(memory_id, None)
+                existing = self._records.pop(memory_id, None)
+                if existing:
+                    self._remove_from_keyword_index(existing)
 
     def search(
         self,
@@ -91,12 +105,21 @@ class MemoryIndex:
         query_tokens = tokenize_text(query or "")
         normalized_symbol = symbol.upper() if symbol else None
         now = datetime.now(UTC).replace(tzinfo=None)
-        hits: list[MemorySearchHit] = []
 
         with self._lock:
-            records = list(self._records.values())
+            # Use inverted index to narrow candidates when query has tokens
+            if query_tokens:
+                candidate_ids: set[str] = set()
+                for token in query_tokens:
+                    candidate_ids |= self._keyword_index.get(token, set())
+                candidates = [
+                    self._records[mid] for mid in candidate_ids if mid in self._records
+                ]
+            else:
+                candidates = list(self._records.values())
 
-        for record in records:
+        hits: list[MemorySearchHit] = []
+        for record in candidates:
             if record.user_id != user_id:
                 continue
             if normalized_symbol and record.symbol not in {normalized_symbol, None}:
@@ -129,14 +152,9 @@ class MemoryIndex:
 
     def stats(self) -> dict[str, int | str | None]:
         with self._lock:
-            keywords = {
-                keyword
-                for record in self._records.values()
-                for keyword in record.keywords
-            }
             return {
                 "index_loaded_count": len(self._records),
-                "index_keyword_count": len(keywords),
+                "index_keyword_count": self._keyword_count,
                 "index_loaded_at": self.loaded_at.isoformat() if self.loaded_at else None,
             }
 
@@ -153,9 +171,18 @@ class MemoryIndex:
         best_score = 0.0
 
         with self._lock:
-            records = list(self._records.values())
+            # Use inverted index to narrow candidates
+            candidate_ids: set[str] = set()
+            for kw in keywords:
+                candidate_ids |= self._keyword_index.get(kw, set())
+            candidates = [
+                self._records[mid] for mid in candidate_ids if mid in self._records
+            ]
+            # Also include all records if no keyword matches (for empty keywords)
+            if not candidates:
+                candidates = list(self._records.values())
 
-        for record in records:
+        for record in candidates:
             if record.user_id != user_id or record.memory_type != memory_type:
                 continue
             if record.symbol != normalized_symbol:
@@ -182,6 +209,7 @@ class MemoryIndex:
                 record.memory_id: self._from_record(record)
                 for record in records
             }
+            self._rebuild_keyword_index()
             self.loaded_at = now
             return len(self._records)
 
@@ -203,6 +231,30 @@ class MemoryIndex:
     def _recency_score(self, created_at: datetime, now: datetime) -> float:
         age_days = max((now - created_at).total_seconds() / 86400, 0)
         return 1 / (1 + age_days / 30)
+
+    def _rebuild_keyword_index(self) -> None:
+        """Rebuild the entire inverted index from current records."""
+        self._keyword_index = defaultdict(set)
+        for record in self._records.values():
+            for kw in record.keywords:
+                self._keyword_index[kw].add(record.memory_id)
+        self._keyword_count = len(self._keyword_index)
+
+    def _add_to_keyword_index(self, record: IndexedMemory) -> None:
+        """Add a single record's keywords to the inverted index."""
+        for kw in record.keywords:
+            self._keyword_index[kw].add(record.memory_id)
+        self._keyword_count = len(self._keyword_index)
+
+    def _remove_from_keyword_index(self, record: IndexedMemory) -> None:
+        """Remove a single record's keywords from the inverted index."""
+        for kw in record.keywords:
+            ids = self._keyword_index.get(kw)
+            if ids:
+                ids.discard(record.memory_id)
+                if not ids:
+                    del self._keyword_index[kw]
+        self._keyword_count = len(self._keyword_index)
 
 
 memory_index = MemoryIndex()

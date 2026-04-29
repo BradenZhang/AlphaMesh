@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import Settings, get_settings
 from app.services.llm.base import LLMProvider
-from app.services.llm.providers.mock_provider import MockLLMProvider
 from app.services.llm.schemas import LLMProfileInfo, LLMProfileListResponse
 
 
@@ -21,12 +20,19 @@ class _LLMProfileConfig(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
-def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
-    settings = settings or get_settings()
-    provider_name = settings.llm_provider.lower()
-
+def _build_provider(
+    provider_name: str,
+    api_key: str | None,
+    model: str,
+    base_url: str | None = None,
+    timeout: float = 60.0,
+    max_retries: int = 3,
+) -> LLMProvider:
+    """Shared factory logic for building an LLM provider by name."""
     if provider_name == "mock":
-        return MockLLMProvider(model=settings.llm_model_name)
+        from app.services.llm.providers.mock_provider import MockLLMProvider
+
+        return MockLLMProvider(model=model)
 
     if provider_name in {"openai", "openai_compatible", "deepseek", "qwen"}:
         from app.services.llm.providers.openai_compatible_provider import (
@@ -34,30 +40,70 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         )
 
         return OpenAICompatibleProvider(
-            api_key=settings.openai_api_key or settings.llm_api_key,
-            model=settings.llm_model_name,
-            base_url=settings.llm_base_url,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
             provider_name=provider_name,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     if provider_name == "anthropic":
         from app.services.llm.providers.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider(
-            api_key=settings.anthropic_api_key or settings.llm_api_key,
-            model=settings.llm_model_name,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     if provider_name == "gemini":
         from app.services.llm.providers.gemini_provider import GeminiProvider
 
         return GeminiProvider(
-            api_key=settings.gemini_api_key or settings.llm_api_key,
-            model=settings.llm_model_name,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     supported = "mock, openai, openai_compatible, deepseek, qwen, anthropic, gemini"
-    raise ValueError(f"Unsupported LLM_PROVIDER '{settings.llm_provider}'. Supported: {supported}.")
+    raise ValueError(f"Unsupported LLM provider '{provider_name}'. Supported: {supported}.")
+
+
+def _unwrap_secret(value) -> str | None:
+    """Extract the string from a SecretStr, or return None."""
+    if value is None:
+        return None
+    if hasattr(value, "get_secret_value"):
+        return value.get_secret_value()
+    return str(value)
+
+
+def _resolve_api_key_for_provider(provider_name: str, settings: Settings) -> str | None:
+    """Resolve the appropriate API key for a given provider name."""
+    if provider_name in {"openai", "openai_compatible", "deepseek", "qwen"}:
+        return _unwrap_secret(settings.openai_api_key) or _unwrap_secret(settings.llm_api_key)
+    if provider_name == "anthropic":
+        return _unwrap_secret(settings.anthropic_api_key) or _unwrap_secret(settings.llm_api_key)
+    if provider_name == "gemini":
+        return _unwrap_secret(settings.gemini_api_key) or _unwrap_secret(settings.llm_api_key)
+    return None
+
+
+def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
+    settings = settings or get_settings()
+    provider_name = settings.llm_provider.lower()
+
+    return _build_provider(
+        provider_name=provider_name,
+        api_key=_resolve_api_key_for_provider(provider_name, settings),
+        model=settings.llm_model_name,
+        base_url=settings.llm_base_url,
+        timeout=settings.llm_timeout,
+        max_retries=settings.llm_max_retries,
+    )
 
 
 def list_llm_profiles(settings: Settings | None = None) -> LLMProfileListResponse:
@@ -92,35 +138,15 @@ def get_llm_provider_for_profile(
 
     config = _find_profile(profile_id, settings)
     provider_name = config.provider.lower()
-    if provider_name == "mock":
-        return MockLLMProvider(model=config.model)
-
     api_key = _get_profile_api_key(config, settings)
-    if provider_name in {"openai", "openai_compatible", "deepseek", "qwen"}:
-        from app.services.llm.providers.openai_compatible_provider import (
-            OpenAICompatibleProvider,
-        )
 
-        return OpenAICompatibleProvider(
-            api_key=api_key,
-            model=config.model,
-            base_url=config.base_url,
-            provider_name=provider_name,
-        )
-
-    if provider_name == "anthropic":
-        from app.services.llm.providers.anthropic_provider import AnthropicProvider
-
-        return AnthropicProvider(api_key=api_key, model=config.model)
-
-    if provider_name == "gemini":
-        from app.services.llm.providers.gemini_provider import GeminiProvider
-
-        return GeminiProvider(api_key=api_key, model=config.model)
-
-    supported = "mock, openai, openai_compatible, deepseek, qwen, anthropic, gemini"
-    raise ValueError(
-        f"Unsupported LLM profile provider '{config.provider}'. Supported: {supported}."
+    return _build_provider(
+        provider_name=provider_name,
+        api_key=api_key,
+        model=config.model,
+        base_url=config.base_url,
+        timeout=settings.llm_timeout,
+        max_retries=settings.llm_max_retries,
     )
 
 
@@ -200,11 +226,11 @@ def _get_profile_api_key(config: _LLMProfileConfig, settings: Settings) -> str |
 
     provider_name = config.provider.lower()
     if provider_name in {"openai", "openai_compatible", "deepseek", "qwen"}:
-        return settings.openai_api_key or settings.llm_api_key
+        return _unwrap_secret(settings.openai_api_key) or _unwrap_secret(settings.llm_api_key)
     if provider_name == "anthropic":
-        return settings.anthropic_api_key or settings.llm_api_key
+        return _unwrap_secret(settings.anthropic_api_key) or _unwrap_secret(settings.llm_api_key)
     if provider_name == "gemini":
-        return settings.gemini_api_key or settings.llm_api_key
+        return _unwrap_secret(settings.gemini_api_key) or _unwrap_secret(settings.llm_api_key)
     return None
 
 

@@ -1,135 +1,178 @@
 import type {
   AgentRun,
   AgentStatus,
-  AutomationResult,
+  ConversationDetail,
+  ConversationSummary,
   LLMProfileListResponse,
   MemoryContext,
   MemoryRecord,
   MemoryStats,
-  MultiAgentResearchReport,
   PaperOrder,
-  Quote,
-  ReActResult,
-  ResearchReport,
+  ReplyAction,
+  ReplyResponse,
   StrategyName
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const DEFAULT_TIMEOUT_MS = 30_000;
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function requestJson<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init ?? {};
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Merge caller signal with our timeout controller
+  if (fetchInit.signal) {
+    fetchInit.signal.addEventListener("abort", () => controller.abort());
+  }
+
+  try {
+    const headers: Record<string, string> = { ...fetchInit.headers as Record<string, string> };
+    if (fetchInit.body) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchInit,
+      headers,
+      signal: controller.signal,
+    });
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const isJson = contentType.includes("application/json");
+    const payload = isJson ? await response.json() : await response.text();
+
+    if (!response.ok) {
+      const detail =
+        typeof payload === "string"
+          ? payload
+          : typeof payload?.detail === "string"
+            ? payload.detail
+            : Array.isArray(payload?.detail)
+              ? payload.detail.map((d: { msg?: string }) => d.msg || String(d)).join("; ")
+              : `Request failed with ${response.status}`;
+      throw new ApiError(response.status, detail);
+    }
+
+    return payload as T;
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(0, `Request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function postJson<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  return requestJson<T>(path, {
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  });
+}
+
+function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return requestJson<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+export const statusApi = {
+  fetchHealth(): Promise<{ status: string; service: string }> {
+    return requestJson("/api/v1/health");
+  }
+};
+
+export const agentsApi = {
+  fetchStatus(): Promise<AgentStatus> {
+    return requestJson("/api/v1/agents/status");
+  },
+  fetchProfiles(): Promise<LLMProfileListResponse> {
+    return requestJson("/api/v1/agents/llm-profiles");
+  },
+  async fetchRuns(limit = 8): Promise<AgentRun[]> {
+    const payload = await requestJson<{ runs: AgentRun[] }>(`/api/v1/agents/runs?limit=${limit}`);
+    return payload.runs;
+  }
+};
+
+export const ordersApi = {
+  async fetchPaperOrders(limit = 8): Promise<PaperOrder[]> {
+    const payload = await requestJson<{ orders: PaperOrder[] }>(`/api/v1/orders/paper?limit=${limit}`);
+    return payload.orders;
+  }
+};
+
+export const memoryApi = {
+  fetchContext(symbol: string, query?: string): Promise<MemoryContext> {
+    const params = new URLSearchParams({ symbol });
+    if (query?.trim()) {
+      params.set("query", query.trim());
+    }
+    return requestJson(`/api/v1/agents/memory/context?${params.toString()}`);
+  },
+  fetchRecent(limit = 8): Promise<MemoryRecord[]> {
+    return requestJson(`/api/v1/agents/memory/recent?limit=${limit}`);
+  },
+  fetchStats(): Promise<MemoryStats> {
+    return requestJson("/api/v1/agents/memory/stats");
+  }
+};
+
+export const chatApi = {
+  async listConversations(): Promise<ConversationSummary[]> {
+    const payload = await requestJson<{ conversations: ConversationSummary[] }>("/api/v1/chat/conversations");
+    return payload.conversations;
+  },
+  createConversation(input?: {
+    symbol?: string;
+    llm_profile_id?: string | null;
+    strategy_name?: StrategyName | null;
+  }): Promise<ConversationSummary> {
+    return postJson("/api/v1/chat/conversations", input ?? {});
+  },
+  getConversation(conversationId: string): Promise<ConversationDetail> {
+    return requestJson(`/api/v1/chat/conversations/${conversationId}`);
+  },
+  updateConversation(
+    conversationId: string,
+    input: {
+      title?: string;
+      symbol?: string | null;
+      llm_profile_id?: string | null;
+      strategy_name?: StrategyName | null;
+    }
+  ): Promise<ConversationSummary> {
+    return patchJson(`/api/v1/chat/conversations/${conversationId}`, input);
+  },
+  reply(
+    conversationId: string,
+    input: {
+      message: string;
+      action: ReplyAction;
+      symbol?: string | null;
+      llm_profile_id?: string | null;
+      strategy_name?: StrategyName | null;
     },
-    ...options
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with ${response.status}`);
+    signal?: AbortSignal
+  ): Promise<ReplyResponse> {
+    return postJson(`/api/v1/chat/conversations/${conversationId}/reply`, input, signal);
   }
-
-  return response.json() as Promise<T>;
-}
-
-export function fetchHealth(): Promise<{ status: string; service: string }> {
-  return request("/api/v1/health");
-}
-
-export function fetchAgentStatus(): Promise<AgentStatus> {
-  return request("/api/v1/agents/status");
-}
-
-export function fetchLLMProfiles(): Promise<LLMProfileListResponse> {
-  return request("/api/v1/agents/llm-profiles");
-}
-
-export function fetchQuote(symbol: string): Promise<Quote> {
-  return request(`/api/v1/market/quote/${symbol}`);
-}
-
-export async function fetchAgentRuns(limit = 8): Promise<AgentRun[]> {
-  const payload = await request<{ runs: AgentRun[] }>(`/api/v1/agents/runs?limit=${limit}`);
-  return payload.runs;
-}
-
-export async function fetchPaperOrders(limit = 8): Promise<PaperOrder[]> {
-  const payload = await request<{ orders: PaperOrder[] }>(`/api/v1/orders/paper?limit=${limit}`);
-  return payload.orders;
-}
-
-export function fetchMemoryContext(symbol: string, query?: string): Promise<MemoryContext> {
-  const params = new URLSearchParams({ symbol });
-  if (query?.trim()) {
-    params.set("query", query.trim());
-  }
-  return request(`/api/v1/agents/memory/context?${params.toString()}`);
-}
-
-export function fetchRecentMemories(limit = 8): Promise<MemoryRecord[]> {
-  return request(`/api/v1/agents/memory/recent?limit=${limit}`);
-}
-
-export function fetchMemoryStats(): Promise<MemoryStats> {
-  return request("/api/v1/agents/memory/stats");
-}
-
-export function reloadMemoryIndex(): Promise<MemoryStats> {
-  return request("/api/v1/agents/memory/reload-index", {
-    method: "POST"
-  });
-}
-
-export function compactMemory(symbol: string): Promise<MemoryRecord> {
-  return request(`/api/v1/agents/memory/compact?symbol=${encodeURIComponent(symbol)}`, {
-    method: "POST"
-  });
-}
-
-export function runResearch(
-  symbol: string,
-  llmProfileId?: string | null
-): Promise<ResearchReport> {
-  return request("/api/v1/research/analyze", {
-    method: "POST",
-    body: JSON.stringify({ symbol, llm_profile_id: llmProfileId })
-  });
-}
-
-export function runMultiAgentResearch(
-  symbol: string,
-  llmProfileId?: string | null
-): Promise<MultiAgentResearchReport> {
-  return request("/api/v1/agents/research/workflow", {
-    method: "POST",
-    body: JSON.stringify({ symbol, llm_profile_id: llmProfileId })
-  });
-}
-
-export function runReActAgent(
-  symbol: string,
-  llmProfileId?: string | null
-): Promise<ReActResult> {
-  return request("/api/v1/agents/react/run", {
-    method: "POST",
-    body: JSON.stringify({ symbol, llm_profile_id: llmProfileId })
-  });
-}
-
-export function runAutomation(
-  symbol: string,
-  mode: "manual" | "paper_auto",
-  strategyName: StrategyName,
-  llmProfileId?: string | null
-): Promise<AutomationResult> {
-  return request("/api/v1/automation/run", {
-    method: "POST",
-    body: JSON.stringify({
-      symbol,
-      mode,
-      strategy_name: strategyName,
-      llm_profile_id: llmProfileId
-    })
-  });
-}
+};
