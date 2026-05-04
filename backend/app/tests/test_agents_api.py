@@ -52,6 +52,24 @@ def test_llm_profiles_endpoint_lists_safe_profiles() -> None:
     assert "api_key" not in payload["profiles"][0]
 
 
+def test_provider_health_endpoint_lists_market_and_execution_connectors() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/v1/agents/providers/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    providers = payload["providers"]
+    assert any(
+        item["provider"] == "mock" and item["capability"] == "market"
+        for item in providers
+    )
+    assert any(
+        item["provider"] == "longbridge" and item["capability"] == "market"
+        for item in providers
+    )
+
+
 def test_multi_agent_research_rejects_unknown_profile() -> None:
     client = TestClient(app)
 

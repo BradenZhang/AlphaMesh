@@ -33,3 +33,33 @@ class OrderStatus(StrEnum):
 class StrategyName(StrEnum):
     MOVING_AVERAGE_CROSS = "moving_average_cross"
     VALUATION_BAND = "valuation_band"
+
+
+class PortfolioDecisionAction(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+    REDUCE = "reduce"
+
+
+class TaskComplexity(StrEnum):
+    SIMPLE = "simple"
+    MODERATE = "moderate"
+    COMPLEX = "complex"
+
+
+class ProviderName(StrEnum):
+    MOCK = "mock"
+    LONGBRIDGE = "longbridge"
+    FUTU = "futu"
+    EASTMONEY = "eastmoney"
+    IBKR = "ibkr"
+
+
+class ProviderTransport(StrEnum):
+    CLI = "cli"
+    MCP = "mcp"
+    OPEND = "opend"
+    API = "api"
+    CLIENT_PORTAL = "client_portal"
+    TWS = "tws"

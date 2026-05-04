@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.common import RunStep
 from app.schemas.research import ResearchReport
 
 
@@ -17,6 +18,9 @@ class AgentRunRecordSchema(BaseModel):
     error_message: str | None = None
     latency_ms: int
     created_at: datetime
+    market_provider: str | None = None
+    execution_provider: str | None = None
+    account_provider: str | None = None
 
 
 class AgentRunListResponse(BaseModel):
@@ -34,6 +38,7 @@ class LLMCallRecordSchema(BaseModel):
     total_tokens: int
     metadata: dict | None = None
     latency_ms: int
+    estimated_cost_usd: float = 0.0
     created_at: datetime
 
 
@@ -49,6 +54,7 @@ class AgentFinding(BaseModel):
     metrics: dict[str, float | str] = Field(default_factory=dict)
     risks: list[str] = Field(default_factory=list)
     confidence_score: float = Field(ge=0, le=1)
+    data_sources: list[str] = Field(default_factory=list)
 
 
 class InvestmentCommitteeReport(BaseModel):
@@ -65,6 +71,8 @@ class MultiAgentResearchReport(BaseModel):
     findings: list[AgentFinding]
     committee_report: InvestmentCommitteeReport
     research_report: ResearchReport
+    case_id: str | None = None
+    market_provider: str | None = None
 
 
 class StrategyReviewReport(BaseModel):
@@ -111,6 +119,7 @@ class ReActRunRequest(BaseModel):
     symbol: str
     question: str | None = None
     llm_profile_id: str | None = None
+    market_provider: str | None = None
     max_steps: int = Field(default=3, ge=1, le=5)
 
 
@@ -120,3 +129,17 @@ class ReActRunResponse(BaseModel):
     steps: list[ReActStep]
     final_answer: str
     confidence_score: float = Field(ge=0, le=1)
+    run_steps: list[RunStep] = Field(default_factory=list)
+    market_provider: str | None = None
+
+
+class ProviderHealthSchema(BaseModel):
+    provider: str
+    capability: str
+    transport: str
+    available: bool
+    message: str | None = None
+
+
+class ProviderHealthListResponse(BaseModel):
+    providers: list[ProviderHealthSchema]

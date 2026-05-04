@@ -4,14 +4,25 @@ from app.domain.enums import OrderStatus
 from app.schemas.order import OrderRequest, OrderResponse
 from app.services.broker.base import BrokerAdapter
 from app.services.broker.paper_order_store import PaperOrderStore
+from app.services.portfolio.holding_store import PortfolioHoldingStore
 
 
 class MockBrokerAdapter(BrokerAdapter):
-    def __init__(self, paper_order_store: PaperOrderStore | None = None) -> None:
+    provider_name = "mock"
+
+    def __init__(
+        self,
+        paper_order_store: PaperOrderStore | None = None,
+        holding_store: PortfolioHoldingStore | None = None,
+    ) -> None:
         self._orders: dict[str, OrderResponse] = {}
         self.paper_order_store = paper_order_store or PaperOrderStore()
+        self.holding_store = holding_store or PortfolioHoldingStore()
 
     def get_positions(self) -> dict[str, float]:
+        holdings = self.holding_store.list_holdings()
+        if holdings:
+            return {h.symbol: h.quantity for h in holdings}
         return {"AAPL": 0.12}
 
     def get_cash(self) -> float:
@@ -29,9 +40,13 @@ class MockBrokerAdapter(BrokerAdapter):
             status=OrderStatus.SUBMITTED,
             message="Paper order submitted through MockBrokerAdapter.",
             created_at=datetime.now(UTC),
+            broker="mock",
+            account_id=order_request.account_id or "paper-default",
+            environment=order_request.environment or "paper",
         )
         self._orders[order_id] = response
         self.paper_order_store.save(response)
+        self.holding_store.upsert_from_order(response)
         return response
 
     def cancel_order(self, order_id: str) -> OrderResponse:

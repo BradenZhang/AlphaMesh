@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import func
 
+from app.db.init_db import init_db
 from app.db.models import ChatConversationRecord, ChatMessageRecord
 from app.db.session import SessionLocal
 from app.domain.enums import AutomationMode, StrategyName
@@ -21,7 +22,9 @@ from app.schemas.chat import (
 from app.services.agents.react_runtime import ReActRuntime
 from app.services.agents.research_workflow import MultiAgentResearchWorkflow
 from app.services.agents.runtime import AgentRuntime
+from app.services.agents.tool_registry import ToolRegistry
 from app.services.automation.flow import AutomationFlow
+from app.services.case.store import InvestmentCaseStore
 from app.services.llm.factory import get_llm_provider_for_profile
 
 
@@ -30,6 +33,10 @@ class ChatConversationNotFoundError(ValueError):
 
 
 class ChatService:
+    def __init__(self) -> None:
+        init_db()
+        self.case_store = InvestmentCaseStore()
+
     def list_conversations(self, user_id: str = "default") -> list[ConversationSummary]:
         with SessionLocal() as session:
             conversations = (
@@ -65,6 +72,9 @@ class ChatService:
             symbol=request.symbol.upper() if request.symbol else "AAPL",
             llm_profile_id=request.llm_profile_id,
             strategy_name=(request.strategy_name or StrategyName.MOVING_AVERAGE_CROSS).value,
+            market_provider=request.market_provider,
+            execution_provider=request.execution_provider,
+            account_provider=request.account_provider,
             user_id=request.user_id,
             created_at=now,
             updated_at=now,
@@ -107,6 +117,12 @@ class ChatService:
                 record.llm_profile_id = request.llm_profile_id
             if request.strategy_name is not None:
                 record.strategy_name = request.strategy_name.value
+            if request.market_provider is not None:
+                record.market_provider = request.market_provider
+            if request.execution_provider is not None:
+                record.execution_provider = request.execution_provider
+            if request.account_provider is not None:
+                record.account_provider = request.account_provider
             if request.title is not None:
                 record.title = request.title.strip()
             record.updated_at = self._now()
@@ -185,10 +201,28 @@ class ChatService:
                 if request.strategy_name is not None
                 else conversation.strategy_name or StrategyName.MOVING_AVERAGE_CROSS.value
             )
+            market_provider = (
+                request.market_provider
+                if request.market_provider is not None
+                else conversation.market_provider
+            )
+            execution_provider = (
+                request.execution_provider
+                if request.execution_provider is not None
+                else conversation.execution_provider
+            )
+            account_provider = (
+                request.account_provider
+                if request.account_provider is not None
+                else conversation.account_provider
+            )
 
             conversation.symbol = symbol
             conversation.llm_profile_id = llm_profile_id
             conversation.strategy_name = strategy_name
+            conversation.market_provider = market_provider
+            conversation.execution_provider = execution_provider
+            conversation.account_provider = account_provider
             if conversation.title.strip().lower() == "new chat":
                 conversation.title = self._build_title(request.message)
             conversation.updated_at = self._now()
@@ -212,6 +246,10 @@ class ChatService:
                 "symbol": symbol,
                 "llm_profile_id": llm_profile_id,
                 "strategy_name": strategy_name,
+                "market_provider": market_provider,
+                "execution_provider": execution_provider,
+                "account_provider": account_provider,
+                "conversation_id": conversation_id,
                 "user_message": self._to_message_schema(user_record),
             }
 
@@ -249,12 +287,22 @@ class ChatService:
         symbol = str(context["symbol"])
         llm_profile_id = context["llm_profile_id"]
         strategy_name = str(context["strategy_name"])
+        market_provider = context.get("market_provider")
+        execution_provider = context.get("execution_provider")
+        account_provider = context.get("account_provider")
 
         if request.action == "chat":
             provider = get_llm_provider_for_profile(
                 llm_profile_id if isinstance(llm_profile_id, str) else None
             )
-            result = ReActRuntime(llm_provider=provider).run(
+            result = ReActRuntime(
+                llm_provider=provider,
+                tool_registry=ToolRegistry(
+                    market_provider_name=(
+                        str(market_provider) if market_provider else None
+                    )
+                ),
+            ).run(
                 symbol=symbol,
                 question=request.message.strip(),
                 llm_profile_id=llm_profile_id if isinstance(llm_profile_id, str) else None,
@@ -272,13 +320,27 @@ class ChatService:
                 llm_profile_id if isinstance(llm_profile_id, str) else None
             )
             result = MultiAgentResearchWorkflow(
-                runtime=AgentRuntime(llm_provider=provider)
+                runtime=AgentRuntime(
+                    llm_provider=provider,
+                    tool_registry=ToolRegistry(
+                        market_provider_name=str(market_provider) if market_provider else None
+                    ),
+                )
             ).run(symbol)
+            case = self.case_store.create(
+                symbol=symbol,
+                thesis=result.research_report.summary,
+                confidence=result.committee_report.confidence_score,
+                risks=result.research_report.risks,
+                data_sources=result.research_report.data_sources,
+                decision=result.committee_report.action_bias.lower(),
+                conversation_id=str(context.get("conversation_id")),
+            )
             return self._summarize_research(result), [
                 ChatArtifactSchema(
                     type="multi_agent_report",
                     title="Multi-Agent Research",
-                    payload=result.model_dump(mode="json"),
+                    payload={**result.model_dump(mode="json"), "case_id": case.case_id},
                 ),
                 ChatArtifactSchema(
                     type="research_report",
@@ -298,6 +360,9 @@ class ChatService:
                 mode=automation_mode,
                 strategy_name=StrategyName(strategy_name),
                 llm_profile_id=llm_profile_id if isinstance(llm_profile_id, str) else None,
+                market_provider=str(market_provider) if market_provider else None,
+                execution_provider=str(execution_provider) if execution_provider else None,
+                account_provider=str(account_provider) if account_provider else None,
             )
         )
         artifacts = [
@@ -353,6 +418,9 @@ class ChatService:
             strategy_name=(
                 StrategyName(record.strategy_name) if record.strategy_name else None
             ),
+            market_provider=record.market_provider,
+            execution_provider=record.execution_provider,
+            account_provider=record.account_provider,
             user_id=record.user_id,
             message_count=message_count,
             created_at=record.created_at,

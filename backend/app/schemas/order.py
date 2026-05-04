@@ -11,6 +11,10 @@ class OrderRequest(BaseModel):
     quantity: float = Field(gt=0)
     limit_price: float | None = Field(default=None, gt=0)
     estimated_amount: float = Field(gt=0)
+    broker: str | None = None
+    account_id: str | None = None
+    environment: str | None = None
+    preview_only: bool = False
 
 
 class OrderResponse(BaseModel):
@@ -24,6 +28,11 @@ class OrderResponse(BaseModel):
     message: str
     created_at: datetime
     paper: bool = True
+    broker: str | None = None
+    account_id: str | None = None
+    environment: str | None = None
+    external_order_id: str | None = None
+    requires_confirmation: bool = False
 
 
 class PaperOrderRecordResponse(BaseModel):

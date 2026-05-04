@@ -40,6 +40,9 @@ class ConversationSummary(BaseModel):
     symbol: str | None = None
     llm_profile_id: str | None = None
     strategy_name: StrategyName | None = None
+    market_provider: str | None = None
+    execution_provider: str | None = None
+    account_provider: str | None = None
     user_id: str = "default"
     message_count: int = 0
     created_at: datetime
@@ -54,6 +57,9 @@ class ConversationCreateRequest(BaseModel):
     symbol: str | None = None
     llm_profile_id: str | None = None
     strategy_name: StrategyName | None = None
+    market_provider: str | None = None
+    execution_provider: str | None = None
+    account_provider: str | None = None
     user_id: str = "default"
 
 
@@ -61,6 +67,9 @@ class ConversationUpdateRequest(BaseModel):
     symbol: str | None = None
     llm_profile_id: str | None = None
     strategy_name: StrategyName | None = None
+    market_provider: str | None = None
+    execution_provider: str | None = None
+    account_provider: str | None = None
     title: str | None = Field(default=None, min_length=1, max_length=120)
 
 
@@ -74,6 +83,9 @@ class ChatReplyRequest(BaseModel):
     symbol: str | None = None
     llm_profile_id: str | None = None
     strategy_name: StrategyName | None = None
+    market_provider: str | None = None
+    execution_provider: str | None = None
+    account_provider: str | None = None
 
 
 class ChatReplyResponse(BaseModel):

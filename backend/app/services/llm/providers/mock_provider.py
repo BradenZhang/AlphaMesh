@@ -17,6 +17,13 @@ class MockLLMProvider(LLMProvider):
         if self._is_memory_summary_request(messages):
             return self._generate_memory_summary(messages)
 
+        system_text = " ".join(
+            m.content for m in messages if m.role == "system"
+        ).lower()
+
+        if "portfolio manager" in system_text:
+            return self._generate_portfolio_manager(messages)
+
         symbol = self._extract_symbol(messages)
         payload = {
             "symbol": symbol,
@@ -58,6 +65,44 @@ class MockLLMProvider(LLMProvider):
         text = "\n".join(message.content for message in messages)
         match = re.search(r"symbol\s*[:=]\s*([A-Za-z0-9._-]+)", text, re.IGNORECASE)
         return match.group(1).upper() if match else "UNKNOWN"
+
+    def _generate_portfolio_manager(self, messages: list[LLMMessage]) -> LLMResponse:
+        payload = {
+            "decisions": [
+                {
+                    "symbol": "AAPL",
+                    "action": "hold",
+                    "target_weight": 0.3,
+                    "rationale": (
+                        "Mock portfolio manager: maintain current allocation "
+                        "based on balanced research."
+                    ),
+                    "confidence_score": 0.7,
+                },
+            ],
+            "portfolio_context_summary": (
+                "Mock portfolio manager synthesis: portfolio is well-diversified "
+                "with moderate concentration. Research signals are balanced."
+            ),
+            "concentration_warnings": [],
+            "sector_exposure_notes": ["Technology sector is within acceptable limits."],
+            "cash_ratio_note": "Cash ratio is healthy at approximately 80% of portfolio value.",
+            "overall_confidence": 0.68,
+        }
+        content = json.dumps(payload)
+        prompt_tokens = sum(len(m.content.split()) for m in messages)
+        completion_tokens = len(content.split())
+        return LLMResponse(
+            content=content,
+            provider="mock",
+            model=self.model,
+            usage={
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            raw=content,
+        )
 
     def _is_memory_summary_request(self, messages: list[LLMMessage]) -> bool:
         text = "\n".join(message.content for message in messages).lower()

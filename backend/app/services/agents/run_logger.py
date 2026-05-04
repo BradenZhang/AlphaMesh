@@ -21,9 +21,13 @@ class AgentRunLogger:
         output_payload: dict | None = None,
         error_message: str | None = None,
         latency_ms: int = 0,
+        run_id: str | None = None,
+        market_provider: str | None = None,
+        execution_provider: str | None = None,
+        account_provider: str | None = None,
     ) -> str:
         init_db()
-        run_id = f"run-{uuid4().hex}"
+        run_id = run_id or f"run-{uuid4().hex}"
         with SessionLocal() as session:
             record = AgentRunRecord(
                 run_id=run_id,
@@ -36,6 +40,9 @@ class AgentRunLogger:
                 output_payload=output_payload,
                 error_message=error_message,
                 latency_ms=latency_ms,
+                market_provider=market_provider,
+                execution_provider=execution_provider,
+                account_provider=account_provider,
                 created_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(record)
@@ -65,6 +72,36 @@ class AgentRunLogger:
                     error_message=record.error_message,
                     latency_ms=record.latency_ms,
                     created_at=record.created_at,
+                    market_provider=record.market_provider,
+                    execution_provider=record.execution_provider,
+                    account_provider=record.account_provider,
                 )
                 for record in records
             ]
+
+    def get_by_run_id(self, run_id: str) -> AgentRunRecordSchema | None:
+        init_db()
+        with SessionLocal() as session:
+            record = (
+                session.query(AgentRunRecord)
+                .filter(AgentRunRecord.run_id == run_id)
+                .first()
+            )
+            if record is None:
+                return None
+            return AgentRunRecordSchema(
+                run_id=record.run_id,
+                run_type=record.run_type,
+                status=record.status,
+                symbol=record.symbol,
+                provider=record.provider,
+                model=record.model,
+                input_payload=record.input_payload,
+                output_payload=record.output_payload,
+                error_message=record.error_message,
+                latency_ms=record.latency_ms,
+                created_at=record.created_at,
+                market_provider=record.market_provider,
+                execution_provider=record.execution_provider,
+                account_provider=record.account_provider,
+            )

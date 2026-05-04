@@ -13,5 +13,9 @@ class BacktestRunner(ABC):
         bars: list[KlineBar],
         strategy_name: StrategyName = StrategyName.MOVING_AVERAGE_CROSS,
         initial_cash: float = 100_000.0,
+        slippage_bps: float = 0.0,
+        commission_per_trade: float = 0.0,
+        walk_forward: bool = False,
+        train_ratio: float = 0.7,
     ) -> BacktestResult:
         raise NotImplementedError

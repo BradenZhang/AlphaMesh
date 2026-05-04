@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import UTC, datetime
 
 from app.schemas.agents import (
     ReActObservation,
@@ -7,6 +8,7 @@ from app.schemas.agents import (
     ReActStep,
     ReActToolCall,
 )
+from app.schemas.common import RunStep
 from app.schemas.memory import MemoryWriteRequest
 from app.services.agents.run_logger import AgentRunLogger
 from app.services.agents.tool_registry import ToolRegistry
@@ -122,6 +124,7 @@ class ReActRuntime:
         memory_context: str,
     ) -> ReActRunResponse:
         steps: list[ReActStep] = []
+        run_steps: list[RunStep] = []
         transcript: list[dict[str, object]] = []
 
         for step_number in range(1, max_steps + 1):
@@ -132,6 +135,7 @@ class ReActRuntime:
                 step_number,
                 memory_context,
             )
+            tick = time.perf_counter()
             started_at = time.perf_counter()
             llm_response = self.llm_provider.generate(messages=messages, temperature=0.1)
             self.llm_call_logger.record(
@@ -146,12 +150,23 @@ class ReActRuntime:
             action_payload = self.output_guard._extract_json(llm_response.content)
 
             if action_payload.get("final_answer"):
+                elapsed = int((time.perf_counter() - tick) * 1000)
+                run_steps.append(RunStep(
+                    step_id=f"step_{step_number}",
+                    label="LLM: final answer",
+                    status="completed",
+                    started_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
+                    duration_ms=elapsed,
+                ))
                 return ReActRunResponse(
                     symbol=symbol,
                     llm_profile_id=llm_profile_id,
                     steps=steps,
                     final_answer=str(action_payload["final_answer"]),
                     confidence_score=float(action_payload.get("confidence_score", 0.65)),
+                    run_steps=run_steps,
+                    market_provider=getattr(self.tool_registry, "provider_name", None),
                 )
 
             tool_call = ReActToolCall(
@@ -161,6 +176,7 @@ class ReActRuntime:
             observation = ReActObservation.model_validate(
                 self.tool_registry.run_tool(tool_call.tool_name, tool_call.arguments)
             )
+            elapsed = int((time.perf_counter() - tick) * 1000)
             step = ReActStep(
                 step_number=step_number,
                 rationale_summary=str(
@@ -171,7 +187,16 @@ class ReActRuntime:
                 observation=observation,
             )
             steps.append(step)
-            transcript.append(step.model_dump(mode="json"))
+            run_steps.append(RunStep(
+                step_id=f"step_{step_number}",
+                label=f"Tool: {tool_call.tool_name}",
+                status="completed" if observation.success else "failed",
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                duration_ms=elapsed,
+                summary=observation.summary,
+            ))
+            transcript.append(self._compact_step_for_transcript(step))
 
         return ReActRunResponse(
             symbol=symbol,
@@ -179,6 +204,8 @@ class ReActRuntime:
             steps=steps,
             final_answer=self._summarize_trace(symbol, steps, question),
             confidence_score=0.68,
+            run_steps=run_steps,
+            market_provider=getattr(self.tool_registry, "provider_name", None),
         )
 
     def _run_deterministic_trace(
@@ -193,24 +220,37 @@ class ReActRuntime:
         planned_tools = [
             (
                 "get_quote",
-                "先查看价格、涨跌幅和成交量，建立行情基线。",
+                "Start with price, change, and volume to establish market context.",
                 {"symbol": symbol},
             ),
             (
                 "get_fundamentals",
-                "再读取估值和财务指标，判断基本面质量。",
+                "Read valuation and financial metrics to assess business quality.",
                 {"symbol": symbol},
             ),
             (
                 "get_kline",
-                "最后读取近期 K 线，观察趋势和样本数量。",
+                "Review recent bars to check trend and available sample size.",
                 {"symbol": symbol, "interval": "1d"},
             ),
         ][:max_steps]
-        steps = [
-            self._build_step(index + 1, tool_name, rationale, arguments)
-            for index, (tool_name, rationale, arguments) in enumerate(planned_tools)
-        ]
+        steps: list[ReActStep] = []
+        run_steps: list[RunStep] = []
+        for index, (tool_name, rationale, arguments) in enumerate(planned_tools):
+            step_number = index + 1
+            tick = time.perf_counter()
+            step = self._build_step(step_number, tool_name, rationale, arguments)
+            elapsed = int((time.perf_counter() - tick) * 1000)
+            steps.append(step)
+            run_steps.append(RunStep(
+                step_id=f"step_{step_number}",
+                label=f"Tool: {tool_name}",
+                status="completed" if step.observation.success else "failed",
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                duration_ms=elapsed,
+                summary=step.observation.summary,
+            ))
         final_answer = self._summarize_trace(symbol, steps, question)
         if fallback_reason:
             final_answer = f"{final_answer} ReAct fallback reason: {fallback_reason}"
@@ -222,6 +262,8 @@ class ReActRuntime:
             steps=steps,
             final_answer=final_answer,
             confidence_score=0.72,
+            run_steps=run_steps,
+            market_provider=getattr(self.tool_registry, "provider_name", None),
         )
 
     def _build_step(
@@ -250,7 +292,8 @@ class ReActRuntime:
         step_number: int,
         memory_context: str,
     ) -> list[LLMMessage]:
-        allowed_tools = "get_quote, get_kline, get_fundamentals, get_market_context"
+        tool_manifest = self.tool_registry.get_tool_manifest()
+        allowed_tools = ", ".join(str(tool["name"]) for tool in tool_manifest)
         return [
             LLMMessage(
                 role="system",
@@ -260,7 +303,10 @@ class ReActRuntime:
                     "Choose one read-only action or return final_answer. "
                     f"Allowed actions: {allowed_tools}. "
                     "Action JSON keys: action, action_input, rationale_summary. "
-                    "Final JSON keys: final_answer, confidence_score."
+                    "Final JSON keys: final_answer, confidence_score. "
+                    "For multi-step requests, call todo_update before data tools. "
+                    "Use load_skill when a task needs domain procedure. "
+                    "Use only the data needed for the user's question."
                 ),
             ),
             LLMMessage(
@@ -273,6 +319,9 @@ class ReActRuntime:
                         "step_number": step_number,
                         "previous_steps": transcript,
                         "memory_context": memory_context,
+                        "tool_manifest": tool_manifest,
+                        "available_skills": self.tool_registry.get_skill_descriptions(),
+                        "current_plan_id": self.tool_registry.plan_id,
                     },
                     ensure_ascii=False,
                     default=str,
@@ -288,12 +337,39 @@ class ReActRuntime:
     ) -> str:
         successful = [step for step in steps if step.observation.success]
         tool_names = ", ".join(step.tool_call.tool_name for step in successful)
-        prompt = question or "形成投研辅助结论"
+        prompt = question or "form an investment research assistance view"
         return (
             f"{symbol} ReAct-lite completed {len(successful)} read-only tool checks "
             f"({tool_names}) for: {prompt}. Results are for engineering demo only "
             "and are not investment advice."
         )
+
+    def _compact_step_for_transcript(self, step: ReActStep) -> dict[str, object]:
+        data = step.observation.data
+        compacted_data: dict[str, object] = {
+            "keys": sorted(data.keys()),
+        }
+        if "market_provider" in data:
+            compacted_data["market_provider"] = data["market_provider"]
+        if "provider" in data:
+            compacted_data["provider"] = data["provider"]
+        if "bar_count" in data:
+            compacted_data["bar_count"] = data["bar_count"]
+        if "skill_name" in data:
+            compacted_data["skill_name"] = data["skill_name"]
+            compacted_data["content_chars"] = data.get("content_chars")
+
+        return {
+            "step_number": step.step_number,
+            "rationale_summary": step.rationale_summary,
+            "tool_call": step.tool_call.model_dump(mode="json"),
+            "observation": {
+                "success": step.observation.success,
+                "summary": step.observation.summary,
+                "data": compacted_data,
+            },
+            "compacted": True,
+        }
 
     def _elapsed_ms(self, started_at: float) -> int:
         return int((time.perf_counter() - started_at) * 1000)

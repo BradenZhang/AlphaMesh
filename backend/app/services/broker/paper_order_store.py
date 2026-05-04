@@ -18,6 +18,10 @@ class PaperOrderStore:
                 quantity=order.quantity,
                 limit_price=order.limit_price,
                 status=order.status.value,
+                broker=order.broker,
+                account_id=order.account_id,
+                external_order_id=order.external_order_id,
+                environment=order.environment,
                 created_at=order.created_at.replace(tzinfo=None),
             )
             session.add(record)

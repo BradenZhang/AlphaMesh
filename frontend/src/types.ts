@@ -4,6 +4,22 @@ export type AgentStatus = {
   is_mock: boolean;
 };
 
+export type ProviderName =
+  | "mock"
+  | "longbridge"
+  | "futu"
+  | "eastmoney"
+  | "ibkr"
+  | (string & {});
+
+export type ProviderHealth = {
+  provider: ProviderName;
+  capability: "market" | "execution" | "account" | (string & {});
+  transport: string;
+  available: boolean;
+  message: string | null;
+};
+
 export type LLMProfile = {
   id: string;
   label: string;
@@ -33,6 +49,23 @@ export type AgentRun = {
   latency_ms: number;
   created_at: string;
   error_message: string | null;
+  market_provider: string | null;
+  execution_provider: string | null;
+  account_provider: string | null;
+};
+
+export type LLMCall = {
+  call_id: string;
+  call_type: string;
+  symbol: string | null;
+  provider: string | null;
+  model: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  estimated_cost_usd: number;
+  created_at: string;
 };
 
 export type ResearchReport = {
@@ -42,6 +75,7 @@ export type ResearchReport = {
   valuation_view: string;
   risks: string[];
   confidence_score: number;
+  data_sources: string[];
 };
 
 export type AgentFinding = {
@@ -52,6 +86,7 @@ export type AgentFinding = {
   metrics: Record<string, number | string>;
   risks: string[];
   confidence_score: number;
+  data_sources: string[];
 };
 
 export type InvestmentCommitteeReport = {
@@ -68,6 +103,7 @@ export type MultiAgentResearchReport = {
   findings: AgentFinding[];
   committee_report: InvestmentCommitteeReport;
   research_report: ResearchReport;
+  case_id?: string;
 };
 
 export type StrategyReviewReport = {
@@ -92,6 +128,19 @@ export type AgentReviewBundle = {
   risk_review: RiskReviewReport;
 };
 
+export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export type RunStep = {
+  step_id: string;
+  label: string;
+  status: RunStepStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number;
+  summary: string | null;
+  error: string | null;
+};
+
 export type ReActStep = {
   step_number: number;
   rationale_summary: string;
@@ -112,6 +161,7 @@ export type ReActResult = {
   steps: ReActStep[];
   final_answer: string;
   confidence_score: number;
+  run_steps?: RunStep[];
 };
 
 export type MemoryRecord = {
@@ -201,6 +251,16 @@ export type AutomationResult = {
     win_rate: number;
     sharpe_ratio: number;
     trade_count: number;
+    slippage_bps: number;
+    commission_per_trade: number;
+    oos_total_return: number | null;
+    oos_max_drawdown: number | null;
+    oos_sharpe_ratio: number | null;
+    is_total_return: number | null;
+    is_max_drawdown: number | null;
+    is_sharpe_ratio: number | null;
+    validation_badge: string | null;
+    look_ahead_bias_check: boolean;
   };
   risk_result: {
     approved: boolean;
@@ -213,6 +273,137 @@ export type AutomationResult = {
   executed: boolean;
   message: string;
   order: PaperOrder | null;
+  run_steps?: RunStep[];
+  case_id?: string;
+  run_id?: string;
+  market_provider?: string | null;
+  execution_provider?: string | null;
+  account_provider?: string | null;
+};
+
+export type RunCheckpoint = {
+  checkpoint_id: string;
+  run_id: string;
+  step_id: string;
+  step_label: string;
+  status: string;
+  input_snapshot: Record<string, unknown> | null;
+  output_snapshot: Record<string, unknown> | null;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number;
+};
+
+// ── Portfolio ──────────────────────────────────────────────
+
+export type WatchlistItem = {
+  item_id: string;
+  symbol: string;
+  label: string | null;
+  sector: string | null;
+  industry: string | null;
+  user_id: string;
+  added_at: string;
+  notes: string | null;
+};
+
+export type PortfolioHolding = {
+  holding_id: string;
+  symbol: string;
+  quantity: number;
+  avg_cost: number;
+  current_price: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  sector: string | null;
+  industry: string | null;
+  weight: number;
+};
+
+export type PortfolioSummary = {
+  total_market_value: number;
+  total_cash: number;
+  total_portfolio_value: number;
+  total_unrealized_pnl: number;
+  total_unrealized_pnl_pct: number;
+  holdings: PortfolioHolding[];
+  sector_breakdown: Record<string, number>;
+  industry_breakdown: Record<string, number>;
+  holding_count: number;
+};
+
+export type PortfolioDecision = {
+  symbol: string;
+  action: "buy" | "sell" | "hold" | "reduce" | (string & {});
+  target_weight: number;
+  rationale: string;
+  confidence_score: number;
+};
+
+export type PortfolioManagerReport = {
+  decisions: PortfolioDecision[];
+  portfolio_context_summary: string;
+  concentration_warnings: string[];
+  sector_exposure_notes: string[];
+  cash_ratio_note: string;
+  overall_confidence: number;
+};
+
+export type RebalanceOrder = {
+  symbol: string;
+  side: string;
+  quantity: number;
+  estimated_amount: number;
+  target_weight: number;
+  current_weight: number;
+  rationale: string;
+};
+
+export type RebalanceProposal = {
+  orders: RebalanceOrder[];
+  estimated_turnover: number;
+  cash_after: number;
+  rationale: string;
+};
+
+export type RebalanceRiskReview = {
+  approved: boolean;
+  risk_level: string;
+  reasons: string[];
+  flagged_orders: string[];
+};
+
+export type RebalanceWorkflowResult = {
+  run_id: string;
+  watchlist_symbols: string[];
+  research_reports: Record<string, unknown>;
+  portfolio_summary: PortfolioSummary | null;
+  portfolio_manager_report: PortfolioManagerReport | null;
+  rebalance_proposal: RebalanceProposal | null;
+  risk_review: RebalanceRiskReview | null;
+  executed_orders: Record<string, unknown>[];
+  run_steps: Record<string, unknown>[];
+  message: string;
+};
+
+// ── Investment Cases ──────────────────────────────────────
+
+export type InvestmentCase = {
+  case_id: string;
+  symbol: string;
+  thesis: string;
+  confidence: number;
+  risks: string[];
+  data_sources: string[];
+  decision: string;
+  order_id: string | null;
+  outcome: string | null;
+  run_id: string | null;
+  conversation_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ChatArtifactBase = {
@@ -268,6 +459,9 @@ export type ConversationSummary = {
   symbol: string | null;
   llm_profile_id: string | null;
   strategy_name: StrategyName | null;
+  market_provider: ProviderName | null;
+  execution_provider: ProviderName | null;
+  account_provider: ProviderName | null;
   user_id: string;
   message_count: number;
   created_at: string;
@@ -282,4 +476,74 @@ export type ReplyResponse = {
   conversation: ConversationSummary;
   user_message: ChatMessage;
   assistant_message: ChatMessage;
+};
+
+export type PlanStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "cancelled";
+
+export type PlanStep = {
+  id: string;
+  text: string;
+  status: PlanStepStatus;
+};
+
+export type AgentTaskStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "blocked"
+  | "cancelled"
+  | "failed";
+
+export type AgentTask = {
+  task_id: string;
+  subject: string;
+  description: string | null;
+  status: AgentTaskStatus;
+  blocked_by: string[];
+  owner: string | null;
+  linked_case_id: string | null;
+  linked_run_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BackgroundRunStatus = "pending" | "running" | "completed" | "failed";
+
+export type BackgroundRun = {
+  background_run_id: string;
+  task_id: string | null;
+  run_type: "automation" | (string & {});
+  status: BackgroundRunStatus;
+  input_payload: Record<string, unknown> | null;
+  output_payload: Record<string, unknown> | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  automation_result?: AutomationResult | null;
+};
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
+export type ApprovalType =
+  | "plan_approval"
+  | "execution_approval"
+  | "risk_exception"
+  | "provider_health_override";
+
+export type ApprovalRequest = {
+  approval_id: string;
+  request_type: ApprovalType;
+  status: ApprovalStatus;
+  subject: string;
+  requested_by: string;
+  target: string | null;
+  linked_task_id: string | null;
+  linked_run_id: string | null;
+  payload: Record<string, unknown>;
+  response: Record<string, unknown>;
+  reason: string | null;
+  expires_at: string | null;
+  decided_at: string | null;
+  created_at: string;
 };

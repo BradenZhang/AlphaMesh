@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { agentsApi, ApiError, chatApi, ordersApi, statusApi } from "./api";
+import { agentsApi, ApiError, automationApi, casesApi, chatApi, ordersApi, portfolioApi, statusApi } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
+import { renderArtifactBody } from "./components/MessageBubble";
+import { RebalanceDrawer } from "./components/RebalanceDrawer";
 import { RightRail } from "./components/RightRail";
+import { RunDetailDrawer } from "./components/RunDetailDrawer";
 import { Sidebar } from "./components/Sidebar";
 import type {
   AgentRun,
   AgentStatus,
+  ChatArtifact,
   ChatMessage,
   ConversationDetail,
   ConversationSummary,
+  InvestmentCase,
+  LLMCall,
   LLMProfileListResponse,
   PaperOrder,
+  PortfolioSummary,
+  ProviderHealth,
+  ProviderName,
+  RebalanceWorkflowResult,
   ReplyAction,
-  StrategyName
+  StrategyName,
+  WatchlistItem
 } from "./types";
 import { getErrorMessage } from "./utils/format";
 
@@ -26,10 +37,12 @@ type SidebarStatus = {
   health: string;
   agentStatus: AgentStatus | null;
   profiles: LLMProfileListResponse | null;
+  providerHealth: ProviderHealth[];
 };
 
 const DEFAULT_SYMBOL = "AAPL";
 const DEFAULT_STRATEGY: StrategyName = "moving_average_cross";
+const DEFAULT_PROVIDER: ProviderName = "mock";
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
 function makePendingMessage(
@@ -73,13 +86,14 @@ export default function App() {
     data: {
       health: "checking",
       agentStatus: null,
-      profiles: null
+      profiles: null,
+      providerHealth: []
     }
   });
-  const [activity, setActivity] = useState<AsyncState<{ runs: AgentRun[]; orders: PaperOrder[] }>>({
+  const [activity, setActivity] = useState<AsyncState<{ runs: AgentRun[]; orders: PaperOrder[]; llmCalls: LLMCall[]; cases: InvestmentCase[] }>>({
     loading: true,
     error: null,
-    data: { runs: [], orders: [] }
+    data: { runs: [], orders: [], llmCalls: [], cases: [] }
   });
   const [composerText, setComposerText] = useState("");
   const [selectedAction, setSelectedAction] = useState<ReplyAction>("chat");
@@ -87,8 +101,22 @@ export default function App() {
     title: "",
     symbol: DEFAULT_SYMBOL,
     llmProfileId: "",
-    strategyName: DEFAULT_STRATEGY as StrategyName
+    strategyName: DEFAULT_STRATEGY as StrategyName,
+    marketProvider: DEFAULT_PROVIDER as ProviderName,
+    executionProvider: DEFAULT_PROVIDER as ProviderName,
+    accountProvider: DEFAULT_PROVIDER as ProviderName
   });
+  const [drawerState, setDrawerState] = useState<{
+    open: boolean;
+    title: string;
+    artifact: ChatArtifact | null;
+  }>({ open: false, title: "", artifact: null });
+  const [retrying, setRetrying] = useState(false);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [rebalanceResult, setRebalanceResult] = useState<RebalanceWorkflowResult | null>(null);
+  const [rebalanceDrawerOpen, setRebalanceDrawerOpen] = useState(false);
 
   const profiles = sidebarStatus.data.profiles?.profiles ?? [];
   const activeProfileId =
@@ -103,12 +131,13 @@ export default function App() {
     () => [
       { label: "Symbol", value: contextDraft.symbol || DEFAULT_SYMBOL },
       { label: "Profile", value: activeProfile?.label ?? "Default" },
+      { label: "Market", value: contextDraft.marketProvider },
       {
         label: "Strategy",
         value: contextDraft.strategyName === "valuation_band" ? "Valuation Band" : "Moving Average"
       }
     ],
-    [activeProfile?.label, contextDraft.strategyName, contextDraft.symbol]
+    [activeProfile?.label, contextDraft.marketProvider, contextDraft.strategyName, contextDraft.symbol]
   );
 
   const loadSidebarStatus = useCallback(async () => {
@@ -117,13 +146,15 @@ export default function App() {
       const health = await statusApi.fetchHealth();
       const agentStatus = await agentsApi.fetchStatus();
       const profilesPayload = await agentsApi.fetchProfiles();
+      const providerHealth = await agentsApi.fetchProviderHealth();
       setSidebarStatus({
         loading: false,
         error: null,
         data: {
           health: `${health.status} / ${health.service}`,
           agentStatus,
-          profiles: profilesPayload
+          profiles: profilesPayload,
+          providerHealth
         }
       });
     } catch (error) {
@@ -138,12 +169,16 @@ export default function App() {
   const loadActivity = useCallback(async () => {
     setActivity((current) => ({ ...current, loading: true, error: null }));
     try {
-      const runs = await agentsApi.fetchRuns(6);
-      const orders = await ordersApi.fetchPaperOrders(6);
+      const [runs, orders, llmCalls, cases] = await Promise.all([
+        agentsApi.fetchRuns(6),
+        ordersApi.fetchPaperOrders(6),
+        agentsApi.fetchLLMCalls(20),
+        casesApi.listCases(undefined, 8)
+      ]);
       setActivity({
         loading: false,
         error: null,
-        data: { runs, orders }
+        data: { runs, orders, llmCalls, cases }
       });
     } catch (error) {
       setActivity((current) => ({
@@ -153,6 +188,66 @@ export default function App() {
       }));
     }
   }, []);
+
+  const loadPortfolio = useCallback(async () => {
+    setPortfolioLoading(true);
+    try {
+      const [items, summary] = await Promise.all([
+        portfolioApi.listWatchlist(),
+        portfolioApi.getPortfolioSummary()
+      ]);
+      setWatchlist(items);
+      setPortfolioSummary(summary);
+    } catch {
+      // silent — portfolio is optional context
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, []);
+
+  const handleAddWatchlist = useCallback(async (symbol: string) => {
+    try {
+      await portfolioApi.addToWatchlist({ symbol });
+      await loadPortfolio();
+    } catch {
+      // duplicate or API error — ignore for MVP
+    }
+  }, [loadPortfolio]);
+
+  const handleRemoveWatchlist = useCallback(async (itemId: string) => {
+    try {
+      await portfolioApi.removeFromWatchlist(itemId);
+      await loadPortfolio();
+    } catch {
+      // ignore for MVP
+    }
+  }, [loadPortfolio]);
+
+  const handleBatchResearch = useCallback(async () => {
+    setPortfolioLoading(true);
+    try {
+      await portfolioApi.batchResearch();
+      await loadPortfolio();
+    } catch {
+      // ignore for MVP
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, [loadPortfolio]);
+
+  const handleRebalance = useCallback(async () => {
+    setPortfolioLoading(true);
+    try {
+      const result = await portfolioApi.runRebalance();
+      setRebalanceResult(result);
+      setRebalanceDrawerOpen(true);
+      await loadPortfolio();
+    } catch {
+      // ignore for MVP
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, [loadPortfolio]);
 
   const loadConversation = useCallback(async (conversationId: string) => {
     let cancelled = false;
@@ -185,7 +280,10 @@ export default function App() {
       if (conversations.length === 0) {
         const created = await chatApi.createConversation({
           symbol: DEFAULT_SYMBOL,
-          strategy_name: DEFAULT_STRATEGY
+          strategy_name: DEFAULT_STRATEGY,
+          market_provider: DEFAULT_PROVIDER,
+          execution_provider: DEFAULT_PROVIDER,
+          account_provider: DEFAULT_PROVIDER
         });
         setConversationList({
           loading: false,
@@ -211,7 +309,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void Promise.allSettled([loadSidebarStatus(), loadActivity(), ensureConversation()]);
+    void Promise.allSettled([loadSidebarStatus(), loadActivity(), ensureConversation(), loadPortfolio()]);
   }, [loadSidebarStatus, loadActivity, ensureConversation]);
 
   useEffect(() => {
@@ -221,12 +319,15 @@ export default function App() {
 
   useEffect(() => {
     if (!activeConversation.data) return;
-    setContextDraft({
-      title: activeConversation.data.title,
-      symbol: activeConversation.data.symbol ?? DEFAULT_SYMBOL,
-      llmProfileId: activeConversation.data.llm_profile_id ?? "",
-      strategyName: activeConversation.data.strategy_name ?? DEFAULT_STRATEGY
-    });
+      setContextDraft({
+        title: activeConversation.data.title,
+        symbol: activeConversation.data.symbol ?? DEFAULT_SYMBOL,
+        llmProfileId: activeConversation.data.llm_profile_id ?? "",
+        strategyName: activeConversation.data.strategy_name ?? DEFAULT_STRATEGY,
+        marketProvider: activeConversation.data.market_provider ?? DEFAULT_PROVIDER,
+        executionProvider: activeConversation.data.execution_provider ?? DEFAULT_PROVIDER,
+        accountProvider: activeConversation.data.account_provider ?? DEFAULT_PROVIDER
+      });
   }, [activeConversation.data]);
 
   const handleCreateConversation = useCallback(async () => {
@@ -234,7 +335,10 @@ export default function App() {
       const created = await chatApi.createConversation({
         symbol: contextDraft.symbol || DEFAULT_SYMBOL,
         llm_profile_id: activeProfileId || null,
-        strategy_name: contextDraft.strategyName || DEFAULT_STRATEGY
+        strategy_name: contextDraft.strategyName || DEFAULT_STRATEGY,
+        market_provider: contextDraft.marketProvider,
+        execution_provider: contextDraft.executionProvider,
+        account_provider: contextDraft.accountProvider
       });
       setConversationList((current) => ({
         loading: false,
@@ -259,7 +363,10 @@ export default function App() {
         title: contextDraft.title.trim() || "New Chat",
         symbol: contextDraft.symbol.trim().toUpperCase() || DEFAULT_SYMBOL,
         llm_profile_id: activeProfileId || null,
-        strategy_name: contextDraft.strategyName
+        strategy_name: contextDraft.strategyName,
+        market_provider: contextDraft.marketProvider,
+        execution_provider: contextDraft.executionProvider,
+        account_provider: contextDraft.accountProvider
       });
       setConversationList((current) => ({
         loading: false,
@@ -314,7 +421,10 @@ export default function App() {
         action,
         symbol: contextDraft.symbol.trim().toUpperCase() || DEFAULT_SYMBOL,
         llm_profile_id: activeProfileId || null,
-        strategy_name: contextDraft.strategyName
+        strategy_name: contextDraft.strategyName,
+        market_provider: contextDraft.marketProvider,
+        execution_provider: contextDraft.executionProvider,
+        account_provider: contextDraft.accountProvider
       });
       setActiveConversation((current) => {
         if (!current.data) return current;
@@ -358,6 +468,31 @@ export default function App() {
     setContextDraft((current) => ({ ...current, ...update }));
   }, []);
 
+  const handleArtifactOpen = useCallback((artifact: ChatArtifact) => {
+    setDrawerState({ open: true, title: artifact.title, artifact });
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerState((current) => ({ ...current, open: false }));
+  }, []);
+
+  const handleRetry = useCallback(async () => {
+    const artifact = drawerState.artifact;
+    if (!artifact || artifact.type !== "automation_result") return;
+    const runId = artifact.payload.run_id;
+    if (!runId) return;
+    setRetrying(true);
+    try {
+      await automationApi.retry(runId);
+      await loadActivity();
+      if (activeConversationId) await loadConversation(activeConversationId);
+    } catch {
+      // errors are shown in the refreshed conversation
+    } finally {
+      setRetrying(false);
+    }
+  }, [drawerState.artifact, activeConversationId, loadActivity, loadConversation]);
+
   const threadMessages = activeConversation.data?.messages ?? EMPTY_MESSAGES;
 
   return (
@@ -384,6 +519,7 @@ export default function App() {
         onComposerTextChange={setComposerText}
         onSelectedActionChange={setSelectedAction}
         onSend={handleSend}
+        onArtifactOpen={handleArtifactOpen}
       />
 
       <RightRail
@@ -395,11 +531,34 @@ export default function App() {
         activityRuns={activity.data.runs}
         activityOrders={activity.data.orders}
         activityError={activity.error}
+        llmCalls={activity.data.llmCalls}
+        cases={activity.data.cases}
         latestRun={latestRun}
         latestOrder={latestOrder}
+        watchlist={watchlist}
+        portfolioSummary={portfolioSummary}
+        portfolioLoading={portfolioLoading}
         onContextDraftChange={handleContextDraftChange}
         onSaveContext={handleSaveContext}
         onRefreshStatus={loadSidebarStatus}
+        onAddWatchlist={handleAddWatchlist}
+        onRemoveWatchlist={handleRemoveWatchlist}
+        onBatchResearch={handleBatchResearch}
+        onRebalance={handleRebalance}
+      />
+
+      <RunDetailDrawer
+        open={drawerState.open}
+        title={drawerState.title}
+        onClose={handleCloseDrawer}
+      >
+        {drawerState.artifact ? renderArtifactBody(drawerState.artifact, handleRetry) : null}
+      </RunDetailDrawer>
+
+      <RebalanceDrawer
+        open={rebalanceDrawerOpen}
+        result={rebalanceResult}
+        onClose={() => setRebalanceDrawerOpen(false)}
       />
     </div>
   );

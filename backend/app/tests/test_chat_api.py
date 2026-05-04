@@ -8,7 +8,13 @@ from app.main import app
 def _create_conversation(client: TestClient, symbol: str) -> str:
     response = client.post(
         "/api/v1/chat/conversations",
-        json={"symbol": symbol, "strategy_name": "moving_average_cross"},
+        json={
+            "symbol": symbol,
+            "strategy_name": "moving_average_cross",
+            "market_provider": "mock",
+            "execution_provider": "mock",
+            "account_provider": "mock",
+        },
     )
     assert response.status_code == 200
     return response.json()["conversation_id"]
@@ -24,7 +30,11 @@ def test_chat_conversation_create_list_get_and_patch() -> None:
     detail_response = client.get(f"/api/v1/chat/conversations/{conversation_id}")
     patch_response = client.patch(
         f"/api/v1/chat/conversations/{conversation_id}",
-        json={"title": "Portfolio Review", "symbol": "MSFT"},
+        json={
+            "title": "Portfolio Review",
+            "symbol": "MSFT",
+            "market_provider": "longbridge",
+        },
     )
 
     assert list_response.status_code == 200
@@ -34,10 +44,12 @@ def test_chat_conversation_create_list_get_and_patch() -> None:
     )
     assert detail_response.status_code == 200
     assert detail_response.json()["symbol"] == symbol
+    assert detail_response.json()["market_provider"] == "mock"
     assert detail_response.json()["messages"] == []
     assert patch_response.status_code == 200
     assert patch_response.json()["title"] == "Portfolio Review"
     assert patch_response.json()["symbol"] == "MSFT"
+    assert patch_response.json()["market_provider"] == "longbridge"
 
 
 def test_chat_reply_defaults_to_react_question_flow() -> None:

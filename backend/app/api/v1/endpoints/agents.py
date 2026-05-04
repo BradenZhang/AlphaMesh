@@ -5,6 +5,8 @@ from app.schemas.agents import (
     AgentRunListResponse,
     LLMCallListResponse,
     MultiAgentResearchReport,
+    ProviderHealthListResponse,
+    ProviderHealthSchema,
     ReActRunRequest,
     ReActRunResponse,
 )
@@ -19,6 +21,8 @@ from app.services.agents.react_runtime import ReActRuntime
 from app.services.agents.research_workflow import MultiAgentResearchWorkflow
 from app.services.agents.run_logger import AgentRunLogger
 from app.services.agents.runtime import AgentRuntime
+from app.services.agents.tool_registry import ToolRegistry
+from app.services.connectors.factory import list_provider_health
 from app.services.llm.call_logger import LLMCallLogger
 from app.services.llm.factory import (
     get_llm_provider,
@@ -64,14 +68,32 @@ def get_llm_profiles() -> LLMProfileListResponse:
         ) from exc
 
 
+@router.get("/providers/health", response_model=ProviderHealthListResponse)
+def get_provider_health() -> ProviderHealthListResponse:
+    return ProviderHealthListResponse(
+        providers=[
+            ProviderHealthSchema(
+                provider=item.provider,
+                capability=item.capability,
+                transport=item.transport,
+                available=item.available,
+                message=item.message,
+            )
+            for item in list_provider_health()
+        ]
+    )
+
+
 @router.post("/research/workflow", response_model=MultiAgentResearchReport)
 def run_multi_agent_research(request: ResearchAnalyzeRequest) -> MultiAgentResearchReport:
     validated = validate_symbol(request.symbol)
     try:
         provider = get_llm_provider_for_profile(request.llm_profile_id)
-        return MultiAgentResearchWorkflow(runtime=AgentRuntime(llm_provider=provider)).run(
-            validated
+        runtime = AgentRuntime(
+            llm_provider=provider,
+            tool_registry=ToolRegistry(market_provider_name=request.market_provider),
         )
+        return MultiAgentResearchWorkflow(runtime=runtime).run(validated)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -81,7 +103,10 @@ def run_react_agent(request: ReActRunRequest) -> ReActRunResponse:
     validated = validate_symbol(request.symbol)
     try:
         provider = get_llm_provider_for_profile(request.llm_profile_id)
-        return ReActRuntime(llm_provider=provider).run(
+        return ReActRuntime(
+            llm_provider=provider,
+            tool_registry=ToolRegistry(market_provider_name=request.market_provider),
+        ).run(
             symbol=validated,
             question=request.question,
             llm_profile_id=request.llm_profile_id,

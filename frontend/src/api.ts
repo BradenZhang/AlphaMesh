@@ -1,16 +1,28 @@
 import type {
   AgentRun,
   AgentStatus,
+  AgentTask,
+  ApprovalRequest,
+  ApprovalType,
+  BackgroundRun,
   ConversationDetail,
   ConversationSummary,
+  InvestmentCase,
+  LLMCall,
   LLMProfileListResponse,
   MemoryContext,
   MemoryRecord,
   MemoryStats,
   PaperOrder,
+  PortfolioHolding,
+  PortfolioSummary,
+  ProviderHealth,
+  RebalanceWorkflowResult,
   ReplyAction,
   ReplyResponse,
-  StrategyName
+  ProviderName,
+  StrategyName,
+  WatchlistItem
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -110,6 +122,14 @@ export const agentsApi = {
   async fetchRuns(limit = 8): Promise<AgentRun[]> {
     const payload = await requestJson<{ runs: AgentRun[] }>(`/api/v1/agents/runs?limit=${limit}`);
     return payload.runs;
+  },
+  async fetchLLMCalls(limit = 20): Promise<LLMCall[]> {
+    const payload = await requestJson<{ calls: LLMCall[] }>(`/api/v1/agents/llm-calls?limit=${limit}`);
+    return payload.calls;
+  },
+  async fetchProviderHealth(): Promise<ProviderHealth[]> {
+    const payload = await requestJson<{ providers: ProviderHealth[] }>("/api/v1/agents/providers/health");
+    return payload.providers;
   }
 };
 
@@ -117,6 +137,34 @@ export const ordersApi = {
   async fetchPaperOrders(limit = 8): Promise<PaperOrder[]> {
     const payload = await requestJson<{ orders: PaperOrder[] }>(`/api/v1/orders/paper?limit=${limit}`);
     return payload.orders;
+  }
+};
+
+export const automationApi = {
+  retry(runId: string): Promise<unknown> {
+    return postJson(`/api/v1/automation/retry/${runId}`);
+  },
+  replay(runId: string): Promise<unknown> {
+    return postJson(`/api/v1/automation/replay/${runId}`);
+  },
+  async getCheckpoints(runId: string): Promise<import("./types").RunCheckpoint[]> {
+    const payload = await requestJson<{ checkpoints: import("./types").RunCheckpoint[] }>(`/api/v1/automation/checkpoints/${runId}`);
+    return payload.checkpoints;
+  }
+};
+
+export const casesApi = {
+  async listCases(symbol?: string, limit = 20): Promise<InvestmentCase[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (symbol) params.set("symbol", symbol);
+    const payload = await requestJson<{ cases: InvestmentCase[] }>(`/api/v1/cases?${params.toString()}`);
+    return payload.cases;
+  },
+  getCase(caseId: string): Promise<InvestmentCase> {
+    return requestJson(`/api/v1/cases/${caseId}`);
+  },
+  updateOutcome(caseId: string, outcome: string): Promise<InvestmentCase> {
+    return patchJson(`/api/v1/cases/${caseId}`, { outcome });
   }
 };
 
@@ -145,6 +193,9 @@ export const chatApi = {
     symbol?: string;
     llm_profile_id?: string | null;
     strategy_name?: StrategyName | null;
+    market_provider?: ProviderName | null;
+    execution_provider?: ProviderName | null;
+    account_provider?: ProviderName | null;
   }): Promise<ConversationSummary> {
     return postJson("/api/v1/chat/conversations", input ?? {});
   },
@@ -158,6 +209,9 @@ export const chatApi = {
       symbol?: string | null;
       llm_profile_id?: string | null;
       strategy_name?: StrategyName | null;
+      market_provider?: ProviderName | null;
+      execution_provider?: ProviderName | null;
+      account_provider?: ProviderName | null;
     }
   ): Promise<ConversationSummary> {
     return patchJson(`/api/v1/chat/conversations/${conversationId}`, input);
@@ -170,9 +224,109 @@ export const chatApi = {
       symbol?: string | null;
       llm_profile_id?: string | null;
       strategy_name?: StrategyName | null;
+      market_provider?: ProviderName | null;
+      execution_provider?: ProviderName | null;
+      account_provider?: ProviderName | null;
     },
     signal?: AbortSignal
   ): Promise<ReplyResponse> {
     return postJson(`/api/v1/chat/conversations/${conversationId}/reply`, input, signal);
   }
+};
+
+export const portfolioApi = {
+  async listWatchlist(): Promise<WatchlistItem[]> {
+    const payload = await requestJson<{ items: WatchlistItem[] }>("/api/v1/portfolio/watchlist");
+    return payload.items;
+  },
+  addToWatchlist(input: {
+    symbol: string;
+    label?: string;
+    sector?: string;
+    industry?: string;
+    notes?: string;
+  }): Promise<WatchlistItem> {
+    return postJson("/api/v1/portfolio/watchlist", input);
+  },
+  removeFromWatchlist(itemId: string): Promise<{ ok: boolean }> {
+    return requestJson(`/api/v1/portfolio/watchlist/${itemId}`, { method: "DELETE" });
+  },
+  getPortfolioSummary(): Promise<PortfolioSummary> {
+    return requestJson("/api/v1/portfolio/summary");
+  },
+  async listHoldings(): Promise<PortfolioHolding[]> {
+    return requestJson("/api/v1/portfolio/holdings");
+  },
+  runRebalance(input?: {
+    user_id?: string;
+    max_orders?: number;
+    force?: boolean;
+  }): Promise<RebalanceWorkflowResult> {
+    return postJson("/api/v1/portfolio/rebalance/run", input ?? {});
+  },
+  batchResearch(): Promise<Record<string, unknown>> {
+    return postJson("/api/v1/portfolio/watchlist/research");
+  }
+};
+
+export const harnessApi = {
+  async listTasks(input?: { status?: string; ready?: boolean }): Promise<AgentTask[]> {
+    const params = new URLSearchParams();
+    if (input?.status) params.set("status", input.status);
+    if (input?.ready !== undefined) params.set("ready", String(input.ready));
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const payload = await requestJson<{ tasks: AgentTask[] }>(`/api/v1/tasks/${suffix}`);
+    return payload.tasks;
+  },
+  createTask(input: {
+    subject: string;
+    description?: string;
+    blocked_by?: string[];
+    owner?: string;
+    linked_case_id?: string;
+    linked_run_id?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<AgentTask> {
+    return postJson("/api/v1/tasks/", input);
+  },
+  updateTask(taskId: string, input: Partial<AgentTask>): Promise<AgentTask> {
+    return patchJson(`/api/v1/tasks/${taskId}`, input);
+  },
+  startAutomationTask(
+    taskId: string,
+    automationRequest: Record<string, unknown>
+  ): Promise<BackgroundRun> {
+    return postJson(`/api/v1/tasks/${taskId}/start`, {
+      run_type: "automation",
+      automation_request: automationRequest,
+    });
+  },
+  getBackgroundRun(backgroundRunId: string): Promise<BackgroundRun> {
+    return requestJson(`/api/v1/tasks/background-runs/${backgroundRunId}`);
+  },
+  async listApprovals(status?: string): Promise<ApprovalRequest[]> {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+    const payload = await requestJson<{ approvals: ApprovalRequest[] }>(
+      `/api/v1/approvals/${suffix}`
+    );
+    return payload.approvals;
+  },
+  createApproval(input: {
+    request_type: ApprovalType;
+    subject: string;
+    requested_by?: string;
+    target?: string;
+    linked_task_id?: string;
+    linked_run_id?: string;
+    payload?: Record<string, unknown>;
+    expires_at?: string;
+  }): Promise<ApprovalRequest> {
+    return postJson("/api/v1/approvals/", input);
+  },
+  respondApproval(
+    approvalId: string,
+    input: { approve: boolean; reason?: string; response?: Record<string, unknown> }
+  ): Promise<ApprovalRequest> {
+    return postJson(`/api/v1/approvals/${approvalId}/respond`, input);
+  },
 };

@@ -7,6 +7,7 @@ from app.db.init_db import init_db
 from app.db.models import LLMCallRecord
 from app.db.session import SessionLocal
 from app.schemas.agents import LLMCallRecordSchema
+from app.services.llm.pricing import estimate_cost_usd
 
 
 class LLMCallLogger:
@@ -63,10 +64,37 @@ class LLMCallLogger:
                     total_tokens=record.total_tokens,
                     metadata=record.metadata_payload,
                     latency_ms=record.latency_ms,
+                    estimated_cost_usd=estimate_cost_usd(
+                        record.provider,
+                        record.model,
+                        record.prompt_tokens,
+                        record.completion_tokens,
+                    ),
                     created_at=record.created_at,
                 )
                 for record in records
             ]
+
+    def cost_by_task_type(self, limit: int = 200) -> dict[str, float]:
+        init_db()
+        with SessionLocal() as session:
+            records = (
+                session.query(LLMCallRecord)
+                .order_by(desc(LLMCallRecord.created_at))
+                .limit(limit)
+                .all()
+            )
+            result: dict[str, float] = {}
+            for record in records:
+                cost = estimate_cost_usd(
+                    record.provider,
+                    record.model,
+                    record.prompt_tokens,
+                    record.completion_tokens,
+                )
+                task_type = record.call_type
+                result[task_type] = result.get(task_type, 0.0) + cost
+            return {k: round(v, 6) for k, v in result.items()}
 
     def normalize_usage(self, usage: dict[str, int] | None) -> dict[str, int]:
         usage = usage or {}

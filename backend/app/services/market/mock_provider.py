@@ -3,10 +3,17 @@ from datetime import UTC, date, datetime, timedelta
 from app.domain.enums import OrderStatus
 from app.schemas.market import (
     AccountSnapshot,
+    FilingItem,
+    FilingsResponse,
     FundamentalsResponse,
     KlineBar,
     KlineResponse,
+    MacroIndicator,
+    MacroResponse,
+    NewsItem,
+    NewsResponse,
     QuoteResponse,
+    SentimentResponse,
 )
 from app.schemas.order import OrderRequest, OrderResponse
 from app.services.market.base import MarketSkillProvider
@@ -18,6 +25,9 @@ class MockSkillProvider(MarketSkillProvider):
     def get_quote(self, symbol: str) -> QuoteResponse:
         return QuoteResponse(
             symbol=symbol.upper(),
+            market="US",
+            currency="USD",
+            provider_symbol=symbol.upper(),
             price=102.5,
             open=100.0,
             high=104.2,
@@ -62,6 +72,9 @@ class MockSkillProvider(MarketSkillProvider):
             interval=interval,
             bars=bars,
             provider=self.provider_name,
+            market="US",
+            currency="USD",
+            provider_symbol=symbol.upper(),
         )
 
     def get_fundamentals(self, symbol: str) -> FundamentalsResponse:
@@ -73,6 +86,9 @@ class MockSkillProvider(MarketSkillProvider):
             net_margin=0.21,
             debt_to_equity=0.38,
             provider=self.provider_name,
+            market="US",
+            currency="USD",
+            provider_symbol=symbol.upper(),
         )
 
     def get_account_snapshot(self) -> AccountSnapshot:
@@ -81,6 +97,8 @@ class MockSkillProvider(MarketSkillProvider):
             portfolio_value=150_000.0,
             positions={"AAPL": 0.12},
             provider=self.provider_name,
+            account_id="paper-default",
+            broker=self.provider_name,
         )
 
     def place_order(self, order_request: OrderRequest) -> OrderResponse:
@@ -94,4 +112,76 @@ class MockSkillProvider(MarketSkillProvider):
             status=OrderStatus.SUBMITTED,
             message="Mock market provider accepted paper order.",
             created_at=datetime.now(UTC),
+            broker=self.provider_name,
+            account_id="paper-default",
+            environment="paper",
+        )
+
+    def get_filings(self, symbol: str, limit: int = 5) -> FilingsResponse:
+        today = date.today()
+        return FilingsResponse(
+            symbol=symbol.upper(),
+            filings=[
+                FilingItem(
+                    filing_type="10-K",
+                    title=f"{symbol.upper()} Annual Report FY{today.year - 1}",
+                    date=date(today.year - 1, 12, 31),
+                    summary="Mock annual report with stable revenue and controlled expenses.",
+                ),
+                FilingItem(
+                    filing_type="10-Q",
+                    title=f"{symbol.upper()} Quarterly Report Q{(today.month - 1) // 3}",
+                    date=today - timedelta(days=45),
+                    summary="Mock quarterly filing showing continued operating momentum.",
+                ),
+            ],
+            provider=self.provider_name,
+        )
+
+    def get_news(self, symbol: str, limit: int = 10) -> NewsResponse:
+        now = datetime.now(UTC)
+        return NewsResponse(
+            symbol=symbol.upper(),
+            items=[
+                NewsItem(
+                    headline=f"{symbol.upper()} maintains guidance in mock earnings call",
+                    source="mock_wire",
+                    date=now - timedelta(hours=2),
+                    sentiment=0.15,
+                ),
+                NewsItem(
+                    headline=f"Analyst firm issues neutral rating on {symbol.upper()}",
+                    source="mock_analyst",
+                    date=now - timedelta(hours=8),
+                    sentiment=-0.05,
+                ),
+                NewsItem(
+                    headline=f"{symbol.upper()} announces mock share buyback program",
+                    source="mock_pr",
+                    date=now - timedelta(days=1),
+                    sentiment=0.2,
+                ),
+            ],
+            provider=self.provider_name,
+        )
+
+    def get_macro(self, region: str = "US") -> MacroResponse:
+        today = date.today()
+        return MacroResponse(
+            region=region,
+            indicators=[
+                MacroIndicator(name="CPI YoY", value=3.2, unit="%", date=today),
+                MacroIndicator(name="GDP Growth", value=2.1, unit="%", date=today),
+                MacroIndicator(name="Unemployment", value=3.8, unit="%", date=today),
+                MacroIndicator(name="Fed Funds Rate", value=5.25, unit="%", date=today),
+            ],
+            provider=self.provider_name,
+        )
+
+    def get_sentiment(self, symbol: str) -> SentimentResponse:
+        return SentimentResponse(
+            symbol=symbol.upper(),
+            score=0.1,
+            sources=["mock_social", "mock_news"],
+            provider=self.provider_name,
         )

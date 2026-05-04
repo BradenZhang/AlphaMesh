@@ -1,4 +1,5 @@
-import type { ChatMessage, ConversationDetail, ReplyAction, StrategyName } from "../types";
+import { useEffect, useRef } from "react";
+import type { ChatArtifact, ChatMessage, ConversationDetail, ReplyAction, StrategyName } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 const DEFAULT_SYMBOL = "AAPL";
@@ -42,6 +43,7 @@ interface ChatPanelProps {
   onComposerTextChange: (text: string) => void;
   onSelectedActionChange: (action: ReplyAction) => void;
   onSend: () => void;
+  onArtifactOpen?: (artifact: ChatArtifact) => void;
 }
 
 export function ChatPanel({
@@ -57,8 +59,27 @@ export function ChatPanel({
   canSend,
   onComposerTextChange,
   onSelectedActionChange,
-  onSend
+  onSend,
+  onArtifactOpen
 }: ChatPanelProps) {
+  const threadRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  }, [threadMessages.length]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (canSend) onSend();
+    }
+  };
+
   return (
     <main className="chatPanel">
       <header className="chatHeader">
@@ -79,7 +100,7 @@ export function ChatPanel({
         </div>
       </header>
 
-      <section className="messageThread">
+      <section className="messageThread" ref={threadRef}>
         {conversationLoading ? <ThreadNotice text="Loading conversation..." /> : null}
         {conversationError ? <ThreadNotice error text={conversationError} /> : null}
         {threadMessages.length === 0 && !conversationLoading ? (
@@ -110,7 +131,11 @@ export function ChatPanel({
           </div>
         ) : null}
         {threadMessages.map((message) => (
-          <MessageBubble key={message.message_id} message={message} />
+          <MessageBubble
+            key={message.message_id}
+            message={message}
+            onArtifactOpen={onArtifactOpen}
+          />
         ))}
       </section>
 
@@ -134,6 +159,8 @@ export function ChatPanel({
             <span className="composerMode">{selectedAction.replaceAll("_", " ")}</span>
           </div>
           <textarea
+            ref={textareaRef}
+            onKeyDown={handleKeyDown}
             onChange={(event) => onComposerTextChange(event.target.value)}
             placeholder={`Message AlphaMesh using ${selectedAction.replaceAll("_", " ")}...`}
             value={composerText}

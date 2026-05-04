@@ -7,10 +7,12 @@ from pydantic import BaseModel, ValidationError
 from app.schemas.agents import (
     AgentFinding,
     InvestmentCommitteeReport,
+    MultiAgentResearchReport,
     RiskReviewReport,
     StrategyReviewReport,
 )
 from app.schemas.backtest import BacktestResult
+from app.schemas.portfolio import PortfolioManagerReport, PortfolioSummary
 from app.schemas.research import ResearchReport
 from app.schemas.risk import RiskResult
 from app.schemas.strategy import StrategySignal
@@ -21,6 +23,7 @@ from app.services.llm.base import LLMProvider
 from app.services.llm.call_logger import LLMCallLogger
 from app.services.llm.factory import get_llm_provider
 from app.services.llm.output_guard import LLMOutputGuard
+from app.services.llm.scheduler import ModelScheduler
 from app.services.llm.schemas import LLMMessage, LLMResponse
 from app.services.memory.store import MemoryStore
 
@@ -36,6 +39,7 @@ class AgentRuntime(AgentRuntimeBase):
         run_logger: AgentRunLogger | None = None,
         llm_call_logger: LLMCallLogger | None = None,
         memory_store: MemoryStore | None = None,
+        model_scheduler: ModelScheduler | None = None,
     ) -> None:
         self.llm_provider = llm_provider or get_llm_provider()
         self.tool_registry = tool_registry or ToolRegistry()
@@ -43,6 +47,7 @@ class AgentRuntime(AgentRuntimeBase):
         self.run_logger = run_logger or AgentRunLogger()
         self.llm_call_logger = llm_call_logger or LLMCallLogger()
         self.memory_store = memory_store or MemoryStore()
+        self.model_scheduler = model_scheduler
 
     def run_research(self, symbol: str) -> ResearchReport:
         normalized = symbol.upper()
@@ -115,7 +120,21 @@ class AgentRuntime(AgentRuntimeBase):
         fallback_payload: dict[str, object],
     ) -> ModelT:
         normalized = symbol.upper()
-        provider_info = self.llm_provider.get_provider_info()
+
+        # Select provider via scheduler if available, otherwise use default
+        scheduler_metadata: dict[str, object] = {}
+        if self.model_scheduler:
+            scheduler_result = self.model_scheduler.get_provider_for_task(agent_name)
+            provider = scheduler_result.provider
+            scheduler_metadata = {
+                "scheduler_complexity": scheduler_result.complexity.value,
+                "scheduler_reason": scheduler_result.reason,
+                "scheduler_profile_id": scheduler_result.profile_id,
+            }
+        else:
+            provider = self.llm_provider
+
+        provider_info = provider.get_provider_info()
         started_at = time.perf_counter()
         memory_context = self._get_memory_context(normalized)
         user_payload_with_memory = {
@@ -133,10 +152,14 @@ class AgentRuntime(AgentRuntimeBase):
                 ),
             ),
         ]
-        input_payload = {"messages": [message.model_dump() for message in messages]}
+        input_payload: dict[str, object] = {
+            "messages": [message.model_dump() for message in messages],
+        }
+        if scheduler_metadata:
+            input_payload["_scheduler"] = scheduler_metadata
 
         try:
-            response = self.llm_provider.generate(messages=messages, temperature=0.2)
+            response = provider.generate(messages=messages, temperature=0.2)
             self._record_llm_usage(
                 call_type=agent_name,
                 symbol=normalized,
@@ -207,6 +230,7 @@ class AgentRuntime(AgentRuntimeBase):
                 },
                 "risks": ["Financial data is mock and not a real filing analysis."],
                 "confidence_score": 0.74,
+                "data_sources": ["mock_fundamentals", "mock_filings"],
             },
         )
 
@@ -230,6 +254,7 @@ class AgentRuntime(AgentRuntimeBase):
                 "metrics": {"pe_ratio": 18.5, "pb_ratio": 2.1},
                 "risks": ["Valuation bands are simplified for MVP demonstration."],
                 "confidence_score": 0.68,
+                "data_sources": ["mock_fundamentals", "mock_quote"],
             },
         )
 
@@ -252,6 +277,7 @@ class AgentRuntime(AgentRuntimeBase):
                 "metrics": {"industry_momentum": "neutral_positive"},
                 "risks": ["No real industry data feed is connected in this MVP."],
                 "confidence_score": 0.64,
+                "data_sources": ["mock_macro", "mock_fundamentals"],
             },
         )
 
@@ -276,6 +302,7 @@ class AgentRuntime(AgentRuntimeBase):
                 "metrics": {"news_sentiment": "neutral"},
                 "risks": ["Mock news cannot reflect breaking market events."],
                 "confidence_score": 0.6,
+                "data_sources": ["mock_news", "mock_sentiment"],
             },
         )
 
@@ -370,6 +397,74 @@ class AgentRuntime(AgentRuntimeBase):
                 ),
                 "risk_flags": risk_result.reasons,
                 "confidence_score": 0.72 if approved_for_auto else 0.58,
+            },
+        )
+
+    def run_portfolio_manager_agent(
+        self,
+        research_reports: dict[str, MultiAgentResearchReport],
+        portfolio_summary: PortfolioSummary,
+    ) -> PortfolioManagerReport:
+        research_payload = {
+            symbol: {
+                "committee": report.committee.model_dump(mode="json") if report.committee else None,
+                "confidence_score": report.confidence_score,
+            }
+            for symbol, report in research_reports.items()
+        }
+        holdings_payload = [h.model_dump(mode="json") for h in portfolio_summary.holdings]
+        fallback_decisions = []
+        for h in portfolio_summary.holdings:
+            fallback_decisions.append({
+                "symbol": h.symbol,
+                "action": "hold",
+                "target_weight": round(h.weight, 4),
+                "rationale": f"Maintain current position in {h.symbol}.",
+                "confidence_score": 0.65,
+            })
+        for symbol in research_reports:
+            if not any(d["symbol"] == symbol for d in fallback_decisions):
+                fallback_decisions.append({
+                    "symbol": symbol,
+                    "action": "buy",
+                    "target_weight": 0.05,
+                    "rationale": f"New position based on research for {symbol}.",
+                    "confidence_score": 0.6,
+                })
+
+        return self.run_json_agent(
+            agent_name="portfolio_manager_agent",
+            symbol="PORTFOLIO",
+            system_prompt=(
+                "You are a portfolio manager. Synthesize multi-symbol research reports "
+                "and current portfolio state into portfolio-weighted decisions. "
+                "Consider concentration limits, sector exposure, cash ratio, and "
+                "correlation. Return PortfolioManagerReport JSON."
+            ),
+            user_payload={
+                "research_reports": research_payload,
+                "portfolio_summary": portfolio_summary.model_dump(mode="json"),
+                "holdings": holdings_payload,
+                "constraints": {
+                    "single_symbol_max_weight": 0.35,
+                    "min_cash_ratio": 0.1,
+                },
+            },
+            response_model=PortfolioManagerReport,
+            fallback_payload={
+                "decisions": fallback_decisions,
+                "portfolio_context_summary": (
+                    "Mock portfolio manager: portfolio has "
+                    f"{portfolio_summary.holding_count} holdings with total value "
+                    f"${portfolio_summary.total_portfolio_value:,.2f}."
+                ),
+                "concentration_warnings": [],
+                "sector_exposure_notes": [],
+                "cash_ratio_note": (
+                    f"Cash is ${portfolio_summary.total_cash:,.2f} "
+                    f"of ${portfolio_summary.total_portfolio_value:,.2f} total."
+                ),
+                "overall_confidence": 0.65,
             },
         )
 
